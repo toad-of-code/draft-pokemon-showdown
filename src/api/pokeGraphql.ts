@@ -1,3 +1,5 @@
+import { STATUS_MOVES } from '../utils/battleLogic';
+
 const POKE_GRAPHQL_URL = "https://beta.pokeapi.co/graphql/v1beta";
 
 export interface PokemonMove {
@@ -202,8 +204,11 @@ export const fetchPokemonWithMoves = async (ids: number[]): Promise<PokemonBase[
           damageClass: pm.pokemon_v2_move.pokemon_v2_movedamageclass?.name || 'status'
         };
 
-        // Only keep attacking moves (power > 0) and deduplicate by name
-        if (move.power !== null && move.power > 0 && !movesMap.has(move.name)) {
+        const isDamaging = move.damageClass === 'physical' || move.damageClass === 'special';
+        const isSupportedStatus = move.damageClass === 'status' && STATUS_MOVES[move.name.toLowerCase()];
+
+        // Only keep damaging moves OR supported status moves
+        if ((isDamaging || isSupportedStatus) && !movesMap.has(move.name)) {
           movesMap.set(move.name, move);
         }
       });

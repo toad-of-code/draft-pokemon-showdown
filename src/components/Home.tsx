@@ -60,8 +60,8 @@ const Home: React.FC = () => {
                     />
                     <FeatureCard
                         icon={<Zap className="w-8 h-8" />}
-                        title="Neural Link"
-                        description="Real-time AI battle thoughts and analysis"
+                        title="Smart AI"
+                        description="Adaptive AI opponent with 3 difficulty levels"
                     />
                 </div>
 

@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useGameStore } from '../../store/useGameStore';
 import type { BattlePokemon, BattleMove } from '../../store/useGameStore';
-import { fetchDraftPair, fetchPokemonByIds, fetchPokemonWithMoves, type PokemonMove } from '../../api/pokeGraphql';
-import { generateFakemonName, generateCounterTeam } from '../../api/geminiAgent';
+import { fetchDraftPair, fetchPokemonWithMoves, type PokemonMove } from '../../api/pokeGraphql';
+import { generateFakemonName } from '../../api/geminiAgent';
 import { generateSpriteUrl } from '../../api/nanoBanana';
 import DraftCard from './DraftCard';
-import { X, Check, CircleDot, Shield, Zap, Skull } from 'lucide-react';
+import { X, Check, Shield, Zap, Skull } from 'lucide-react';
 import physicalIcon from '../../assets/physical_move_icon_by_jormxdos_dfgb60u-fullview.png';
 import specialIcon from '../../assets/special_move_icon_by_jormxdos_dfgb60n-fullview.png';
+import statusIcon from '../../assets/status_move_icon_by_jormxdos_dfgb616-fullview.png';
 
 const DraftScreen: React.FC = () => {
     const hasLoadedRef = useRef(false);
-    const { addToUserTeam, userTeam, setGamePhase, setBotTeam, difficulty, setDifficulty } = useGameStore();
+    const { addToUserTeam, setGamePhase, setBotTeam, difficulty, setDifficulty } = useGameStore();
     const [draftPair, setDraftPair] = useState<BattlePokemon[]>([]);
     const [loading, setLoading] = useState(false);
     const [draftCount, setDraftCount] = useState(0);
@@ -21,6 +22,9 @@ const DraftScreen: React.FC = () => {
     const [selectedPokemon, setSelectedPokemon] = useState<BattlePokemon | null>(null);
     const [movePool, setMovePool] = useState<BattleMove[]>([]);
     const [selectedMoves, setSelectedMoves] = useState<BattleMove[]>([]);
+
+    // Track discarded Pokemon for bot team
+    const [discardedTeam, setDiscardedTeam] = useState<BattlePokemon[]>([]);
 
     // Difficulty Color Mapping
     const difficultyColors = {
@@ -109,6 +113,8 @@ const DraftScreen: React.FC = () => {
                     currentHp: calculatedHp,
                     spriteUrl: spriteUrl,
                     isBot: false,
+                    statusEffect: null,
+                    statusTurns: 0,
                     learnset: p.moves || [] // Store the full learnset
                 } as BattlePokemon & { learnset: PokemonMove[] };
             }));
@@ -130,7 +136,9 @@ const DraftScreen: React.FC = () => {
                 type: m.type,
                 power: m.power || 0,
                 accuracy: m.accuracy || 100,
-                category: m.damageClass as 'physical' | 'special' | 'status'
+                category: m.damageClass as 'physical' | 'special' | 'status',
+                pp: m.pp || 15,
+                currentPp: m.pp || 15
             }))
             .slice(0, 7); // Take top 7 moves
 
@@ -154,6 +162,60 @@ const DraftScreen: React.FC = () => {
         const finalPokemon = { ...selectedPokemon, moves: selectedMoves };
         addToUserTeam(finalPokemon);
 
+        // Find and prepare the discarded Pokemon (the one not selected)
+        const discardedPokemon = draftPair.find(p => p.id !== selectedPokemon.id);
+        let botPokemon: BattlePokemon | null = null;
+
+        if (discardedPokemon) {
+            // Give the discarded Pokemon 4 moves with diverse types for better coverage
+            const learnset = (discardedPokemon as any).learnset || [];
+            const battleMoves: BattleMove[] = learnset
+                .map((m: any) => ({
+                    name: m.name,
+                    type: m.type,
+                    power: m.power || 0,
+                    accuracy: m.accuracy || 100,
+                    category: m.damageClass as 'physical' | 'special' | 'status',
+                    pp: m.pp || 15,
+                    currentPp: m.pp || 15
+                }))
+                .filter((m: BattleMove) => m.power > 0); // Only damaging moves
+
+            // Select moves with diverse types for better coverage
+            const selectedBotMoves: BattleMove[] = [];
+            const usedTypes = new Set<string>();
+
+            // First pass: pick one move of each unique type (sorted by power)
+            const sortedByPower = [...battleMoves].sort((a, b) => b.power - a.power);
+            for (const move of sortedByPower) {
+                if (selectedBotMoves.length >= 4) break;
+                if (!usedTypes.has(move.type)) {
+                    selectedBotMoves.push(move);
+                    usedTypes.add(move.type);
+                }
+            }
+
+            // Second pass: fill remaining slots with highest power moves
+            for (const move of sortedByPower) {
+                if (selectedBotMoves.length >= 4) break;
+                if (!selectedBotMoves.find(m => m.name === move.name)) {
+                    selectedBotMoves.push(move);
+                }
+            }
+
+            const botMoves = selectedBotMoves.slice(0, 4);
+
+            botPokemon = {
+                ...discardedPokemon,
+                id: crypto.randomUUID(),
+                moves: botMoves,
+                isBot: true,
+                statusEffect: null,
+                statusTurns: 0,
+            };
+            setDiscardedTeam(prev => [...prev, botPokemon!]);
+        }
+
         const newCount = draftCount + 1;
         setDraftCount(newCount);
         setShowMoveSelection(false);
@@ -162,85 +224,15 @@ const DraftScreen: React.FC = () => {
         if (newCount < 3) {
             await loadNewPair();
         } else {
-            // Draft Complete - Generate Bot Team
-            await generateBotTeam();
+            // Draft Complete - Use discarded Pokemon as bot team
+            const finalBotTeam = botPokemon
+                ? [...discardedTeam, botPokemon]
+                : discardedTeam;
+
+            setBotTeam(finalBotTeam as BattlePokemon[]);
             setGamePhase('BATTLE');
         }
     };
-
-    const generateBotTeam = async () => {
-        setLoading(true);
-        let botBase: any[] = [];
-
-        if (difficulty === 'HARD') {
-            // Gemini Counter-Picking
-            console.log("Generating Counter Team via Gemini...");
-            const simpleUserTeam = userTeam.map(p => ({
-                name: p.name,
-                types: p.types,
-                stats: p.stats
-            }));
-
-            const counterData = await generateCounterTeam(simpleUserTeam);
-
-            if (counterData && counterData.counter_picks) {
-                const ids = counterData.counter_picks.map((p: any) => p.base_species_id);
-                botBase = await fetchPokemonByIds(ids);
-                console.log("✅ Gemini counter-pick successful:", counterData.analysis);
-            } else {
-                console.warn("⚠️ FALLBACK: Gemini counter-pick failed, using random team");
-            }
-        }
-
-        // Fallback or Normal/Easy mode
-        if (botBase.length < 3) {
-            if (difficulty === 'HARD') {
-                console.warn("⚠️ FALLBACK: Gemini returned insufficient Pokémon, filling with random");
-            }
-            const randoms = await fetchDraftPair();
-            const randoms2 = await fetchDraftPair();
-            botBase = [...botBase, ...randoms, ...randoms2].slice(0, 3);
-        }
-
-        // Fetch moves for bot Pokemon
-        const botWithMoves = await fetchPokemonWithMoves(botBase.map(p => p.id));
-
-        const botTeam = await Promise.all(botWithMoves.map(async (p) => {
-            const spriteUrl = await generateSpriteUrl(p.name, p.id);
-            const baseHp = p.stats.find((s: any) => s.name === 'hp')?.value || 50;
-            const calculatedHp = baseHp + 60;
-
-            // Convert moves to BattleMove format and select 4 random ones
-            const learnset = p.moves || [];
-            const battleMoves: BattleMove[] = learnset
-                .map(m => ({
-                    name: m.name,
-                    type: m.type,
-                    power: m.power || 0,
-                    accuracy: m.accuracy || 100,
-                    category: m.damageClass as 'physical' | 'special' | 'status'
-                }));
-
-            // Randomly select 4 moves from learnset
-            const shuffled = battleMoves.sort(() => Math.random() - 0.5);
-            const selectedMoves = shuffled.slice(0, 4);
-
-            return {
-                id: crypto.randomUUID(),
-                baseId: p.id,
-                name: p.name.charAt(0).toUpperCase() + p.name.slice(1),
-                types: p.types,
-                stats: p.stats,
-                moves: selectedMoves,
-                maxHp: calculatedHp,
-                currentHp: calculatedHp,
-                spriteUrl: spriteUrl,
-                isBot: true,
-            } as BattlePokemon;
-        }));
-        setBotTeam(botTeam);
-        setLoading(false);
-    }
 
     useEffect(() => {
         // Guard against StrictMode double-mount causing flicker
@@ -351,7 +343,7 @@ const DraftScreen: React.FC = () => {
                                                     <span className="font-black text-white text-lg drop-shadow-md">{move.name}</span>
                                                     {move.category === 'physical' && <img src={physicalIcon} alt="Physical" className="w-10 h-10 object-contain drop-shadow-md" />}
                                                     {move.category === 'special' && <img src={specialIcon} alt="Special" className="w-10 h-10 object-contain drop-shadow-md" />}
-                                                    {move.category === 'status' && <CircleDot className="w-6 h-6 text-slate-200 fill-slate-400 drop-shadow-md" />}
+                                                    {move.category === 'status' && <img src={statusIcon} alt="Status" className="w-10 h-10 object-contain drop-shadow-md" />}
                                                 </div>
                                                 {isSelected && <Check className="w-6 h-6 text-white drop-shadow-md" />}
                                             </div>
@@ -359,6 +351,7 @@ const DraftScreen: React.FC = () => {
                                                 <span className="px-2 py-0.5 bg-black/30 rounded uppercase border border-white/10">{move.type}</span>
                                                 <span className="px-2 py-0.5 bg-black/30 rounded border border-white/10">POW: {move.power || '-'}</span>
                                                 <span className="px-2 py-0.5 bg-black/30 rounded border border-white/10">ACC: {move.accuracy}%</span>
+                                                <span className="px-2 py-0.5 bg-black/30 rounded border border-white/10">PP: {move.pp}</span>
                                             </div>
                                         </div>
 

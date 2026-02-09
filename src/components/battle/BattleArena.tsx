@@ -1,27 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import { useGameStore } from '../../store/useGameStore';
 import type { BattlePokemon, BattleMove } from '../../store/useGameStore';
-import { calculateDamage } from '../../utils/battleLogic';
+import { calculateDamage, selectBestMove, findBestSwitchIn, getTypeEffectiveness, STATUS_MOVES } from '../../utils/battleLogic';
 import Sprite from './Sprite';
-import NeuralLink from './NeuralLink';
-import { X, CircleDot, ArrowLeft, RefreshCw, Sword } from 'lucide-react';
-import { generateBattleThought } from '../../api/geminiAgent';
+import { X, ArrowLeft, RefreshCw, Sword } from 'lucide-react';
 import physicalIcon from '../../assets/physical_move_icon_by_jormxdos_dfgb60u-fullview.png';
 import specialIcon from '../../assets/special_move_icon_by_jormxdos_dfgb60n-fullview.png';
+import statusIcon from '../../assets/status_move_icon_by_jormxdos_dfgb616-fullview.png';
 
 const BattleArena: React.FC = () => {
     const {
-        userTeam, botTeam, difficulty,
-        updatePokemonHp, addLog, setGamePhase,
+        userTeam, botTeam, difficulty, battleLog,
+        updatePokemonHp, updateMovePp, setStatusEffect, addLog, setGamePhase,
+        recordDamage, recordDamageTaken, recordKill, nextTurn
     } = useGameStore();
 
     const [activeUserIndex, setActiveUserIndex] = useState(0);
     const [activeBotIndex, setActiveBotIndex] = useState(0);
     const [turnState, setTurnState] = useState<'USER_TURN' | 'BOT_TURN' | 'PROCESSING' | 'GAME_OVER'>('USER_TURN');
     const [showSwitchModal, setShowSwitchModal] = useState(false);
+    const [isUserHit, setIsUserHit] = useState(false);  // Flash/shake when user takes damage
+    const [isBotHit, setIsBotHit] = useState(false);    // Flash/shake when bot takes damage
     const [isUserAttacking, setIsUserAttacking] = useState(false);
     const [isBotAttacking, setIsBotAttacking] = useState(false);
+    const [isLogExpanded, setIsLogExpanded] = useState(true); // Collapsible battle log
     const [menuMode, setMenuMode] = useState<'MAIN' | 'FIGHT' | 'PKMN'>('MAIN');
+
 
     // Difficulty Color Mapping
     const difficultyColors = {
@@ -55,7 +59,7 @@ const BattleArena: React.FC = () => {
 
     // Random battle background
     const [battleBg] = useState(() => {
-        const bgs = ['/bgs/images.jpg', '/bgs/DVMT-6OXcAE2rZY.jpg.afab972f972bd7fbd4253bc7aa1cf27f.jpg'];
+        const bgs = ['/bgs/images.jpg', '/bgs/DVMT-6OXcAE2rZY.jpg.afab972f972bd7fbd4253bc7aa1cf27f.jpg', '/bgs/bg-meadow.png'];
         return bgs[Math.floor(Math.random() * bgs.length)];
     });
 
@@ -84,7 +88,11 @@ const BattleArena: React.FC = () => {
             const nextIndex = userTeam.findIndex(p => p.currentHp > 0);
             if (nextIndex !== -1) {
                 addLog(`${userMon.name} has fallen! Sending out ${userTeam[nextIndex].name}...`);
-                setTimeout(() => setActiveUserIndex(nextIndex), 1000);
+                setTimeout(() => {
+                    setActiveUserIndex(nextIndex);
+                    // CRITICAL FIX: Force user turn when sending out new Pokemon to prevent freeze
+                    setTurnState('USER_TURN');
+                }, 1000);
             }
         }
         if (botMon && botMon.currentHp <= 0 && turnState !== 'GAME_OVER') {
@@ -111,6 +119,9 @@ const BattleArena: React.FC = () => {
 
         addLog(`${attacker.name} used ${move.name}!`);
 
+        // Decrement PP
+        updateMovePp(attacker.id, move.name);
+
         if (isUserAttacker) setIsUserAttacking(true);
         else setIsBotAttacking(true);
 
@@ -134,15 +145,127 @@ const BattleArena: React.FC = () => {
         if (result.effectiveness < 1 && result.effectiveness > 0) addLog("It's not very effective...");
         if (result.effectiveness === 0) addLog("It had no effect...");
 
+        // CHECK FOR STATUS MOVE APPLICATION
+        const moveNameLower = move.name.toLowerCase();
+        if (move.category === 'status' && STATUS_MOVES[moveNameLower]) {
+            const statusToApply = STATUS_MOVES[moveNameLower];
+
+            // Check Immunities
+            const isImmune = (
+                (statusToApply === 'burn' && defender.types.includes('fire')) ||
+                (statusToApply === 'poison' && (defender.types.includes('poison') || defender.types.includes('steel'))) ||
+                (statusToApply === 'paralysis' && defender.types.includes('electric')) ||
+                (statusToApply === 'sleep' && (defender.statusEffect !== null)) // Can't sleep if already status'd
+            );
+
+            if (defender.statusEffect) {
+                addLog(`But it failed! ${defender.name} is already ${defender.statusEffect}!`);
+            } else if (isImmune) {
+                addLog(`It doesn't affect ${defender.name}...`);
+            } else {
+                // Apply status
+                // Duration: 2-4 turns (results in 1-3 turns of sleep due to immediate decrement)
+                setStatusEffect(defender.id, statusToApply, statusToApply === 'sleep' ? Math.floor(Math.random() * 3) + 2 : 0);
+                addLog(`${defender.name} was inflicted with ${statusToApply.toUpperCase()}!`);
+                return; // Status moves deal no damage, so we can return here
+            }
+        }
+
         const newHp = Math.max(0, defender.currentHp - finalDamage);
+
+        // Trigger hit animation on the defender
+        if (isUserAttacker) {
+            setIsBotHit(true);
+            setTimeout(() => setIsBotHit(false), 300);
+        } else {
+            setIsUserHit(true);
+            setTimeout(() => setIsUserHit(false), 300);
+        }
+
         updatePokemonHp(defender.id, newHp);
+
+        // Record Stats
+        recordDamage(attacker.id, finalDamage);
+        recordDamageTaken(defender.id, finalDamage);
+
+        if (newHp === 0) {
+            addLog(`${defender.name} fainted!`);
+            recordKill(attacker.id);
+            // Check win condition immediately (next render handles phase change)
+        }
 
         const percentDmg = Math.floor((finalDamage / defender.maxHp) * 100);
         addLog(`(Target took ${percentDmg}% damage)`);
+
+        // Self-destruct and Explosion: kill the user after dealing damage
+        const selfDestructMoves = ['self-destruct', 'selfdestruct', 'explosion', 'memento', 'final gambit', 'healing wish', 'lunar dance', 'misty explosion'];
+        if (selfDestructMoves.includes(move.name.toLowerCase().replace(/\s+/g, ''))) {
+            addLog(`${attacker.name} fainted from using ${move.name}!`);
+            updatePokemonHp(attacker.id, 0);
+            // Self-destruct does not count as a kill for the user 
+            // Actually, recordKill increments 'kills' count. Self-destruct shouldn't increment kills for oneself unless valid.
+            // But we should record the death? No tracking for deaths yet, only kills.
+        }
     };
 
     const getSpeed = (pokemon: BattlePokemon): number => {
-        return pokemon.stats.find(s => s.name === 'speed')?.value || 50;
+        // Paralysis halves speed
+        const baseSpeed = pokemon.stats.find(s => s.name === 'speed')?.value || 50;
+        return pokemon.statusEffect === 'paralysis' ? Math.floor(baseSpeed / 2) : baseSpeed;
+    };
+
+    // Check if a Pokemon can move this turn (returns true if can move)
+    const canPokemonMove = (pokemon: BattlePokemon): { canMove: boolean; message?: string } => {
+        if (!pokemon.statusEffect) return { canMove: true };
+
+        switch (pokemon.statusEffect) {
+            case 'sleep':
+                if (pokemon.statusTurns > 0) {
+                    // Decrement sleep turns via fresh store update
+                    const newTurns = pokemon.statusTurns - 1;
+                    if (newTurns <= 0) {
+                        setStatusEffect(pokemon.id, null, 0);
+                        return { canMove: true, message: `${pokemon.name} woke up!` };
+                    }
+                    // FIX: Update the decremented turns in the store!
+                    setStatusEffect(pokemon.id, 'sleep', newTurns);
+                    return { canMove: false, message: `${pokemon.name} is fast asleep!` };
+                }
+                setStatusEffect(pokemon.id, null, 0);
+                return { canMove: true, message: `${pokemon.name} woke up!` };
+            case 'freeze':
+                // 20% chance to thaw each turn
+                if (Math.random() < 0.2) {
+                    setStatusEffect(pokemon.id, null, 0);
+                    return { canMove: true, message: `${pokemon.name} thawed out!` };
+                }
+                return { canMove: false, message: `${pokemon.name} is frozen solid!` };
+            case 'paralysis':
+                // 25% chance to be fully paralyzed
+                if (Math.random() < 0.25) {
+                    return { canMove: false, message: `${pokemon.name} is paralyzed! It can't move!` };
+                }
+                return { canMove: true };
+            default:
+                return { canMove: true };
+        }
+    };
+
+    // Apply end-of-turn status damage (burn/poison)
+    const applyEndTurnStatus = (pokemon: BattlePokemon) => {
+        if (!pokemon.statusEffect || pokemon.currentHp <= 0) return;
+
+        const statusDamage = Math.floor(pokemon.maxHp / 16); // 1/16 max HP
+
+        if (pokemon.statusEffect === 'burn') {
+            const newHp = Math.max(0, pokemon.currentHp - statusDamage);
+            updatePokemonHp(pokemon.id, newHp);
+            addLog(`${pokemon.name} is hurt by its burn! (-${Math.floor((statusDamage / pokemon.maxHp) * 100)}%)`);
+        } else if (pokemon.statusEffect === 'poison') {
+            const newHp = Math.max(0, pokemon.currentHp - statusDamage);
+            updatePokemonHp(pokemon.id, newHp);
+            addLog(`${pokemon.name} is hurt by poison! (-${Math.floor((statusDamage / pokemon.maxHp) * 100)}%)`);
+        }
     };
 
     const handleUserMove = async (move: BattleMove) => {
@@ -155,7 +278,20 @@ const BattleArena: React.FC = () => {
 
         if (userGoesFirst) {
             addLog(`${userMon.name} outspeeds! (SPD: ${userSpeed} vs ${botSpeed})`);
-            await executeMove(userMon, botMon, move, true);
+
+            // Check if user can move
+            const userCanMove = canPokemonMove(userMon);
+            if (userCanMove.message) addLog(userCanMove.message);
+
+            if (userCanMove.canMove) {
+                await executeMove(userMon, botMon, move, true);
+            }
+
+            // Apply end-of-turn status damage to user
+            const freshUserAfterMove = useGameStore.getState().userTeam[activeUserIndex];
+            if (freshUserAfterMove && freshUserAfterMove.currentHp > 0) {
+                applyEndTurnStatus(freshUserAfterMove);
+            }
 
             // FIX: Check FRESH state from store, not the stale 'botMon' variable
             const freshBot = useGameStore.getState().botTeam[activeBotIndex];
@@ -166,27 +302,60 @@ const BattleArena: React.FC = () => {
                 }, 1000);
             } else {
                 setTurnState('USER_TURN');
+                nextTurn(); // End of full turn (User -> Bot -> Faint/End) ?? No, if bot died, turn ends?
+                // Actually, if bot died, new bot comes in.
+                // Standard Pokemon logic: Turn ends when both have moved or one fainted/switched?
+                // For simplicity: Increment turn after a full round attempt. 
+                // However, logic here is: User Moved -> Bot survived -> Bot's Turn.
             }
         } else {
             addLog(`Enemy ${botMon.name} outspeeds! (SPD: ${botSpeed} vs ${userSpeed})`);
-            const botMove = botMon.moves[Math.floor(Math.random() * botMon.moves.length)];
-            const thought = await generateBattleThought(botMon.name, userMon.name, botMove.name);
-            addLog(`[NEURAL LINK]: ${thought}`);
-            await executeMove(botMon, userMon, botMove, false);
+
+            // Check if bot can move
+            const botCanMove = canPokemonMove(botMon);
+            if (botCanMove.message) addLog(botCanMove.message);
+
+            if (botCanMove.canMove) {
+                const botMove = selectBestMove(botMon, userMon);
+                const effectiveness = getTypeEffectiveness(botMove.type, userMon.types);
+                const effectLabel = effectiveness > 1 ? "SUPER EFFECTIVE" : effectiveness < 1 ? "resisted" : "neutral";
+                addLog(`[AI] ${botMon.name} uses ${botMove.name} (${effectLabel}).`);
+                await executeMove(botMon, userMon, botMove, false);
+            }
+
+            // Apply end-of-turn status damage to bot
+            const freshBotAfterMove = useGameStore.getState().botTeam[activeBotIndex];
+            if (freshBotAfterMove && freshBotAfterMove.currentHp > 0) {
+                applyEndTurnStatus(freshBotAfterMove);
+            }
 
             // FIX: Check FRESH state for user pokemon as well
             const freshUser = useGameStore.getState().userTeam[activeUserIndex];
             if (freshUser && freshUser.currentHp > 0) {
                 await new Promise(r => setTimeout(r, 500));
-                // We must also use the fresh reference for the attacker
-                await executeMove(freshUser, botMon, move, true);
+
+                // Check if user can move
+                const userCanMoveNow = canPokemonMove(freshUser);
+                if (userCanMoveNow.message) addLog(userCanMoveNow.message);
+
+                if (userCanMoveNow.canMove) {
+                    await executeMove(freshUser, botMon, move, true);
+                }
+
+                // Apply end-of-turn status damage to user
+                const freshUserAfter = useGameStore.getState().userTeam[activeUserIndex];
+                if (freshUserAfter && freshUserAfter.currentHp > 0) {
+                    applyEndTurnStatus(freshUserAfter);
+                }
 
                 // Re-check bot health after retaliation
-                const freshBotAfter = useGameStore.getState().botTeam[activeBotIndex];
-                if (freshBotAfter && freshBotAfter.currentHp > 0) {
+                if (freshBotAfterMove && freshBotAfterMove.currentHp > 0) {
                     setTimeout(() => setTurnState('USER_TURN'), 1000);
+                    nextTurn(); // End of round (Bot moved -> User moved)
                 } else {
                     setTurnState('USER_TURN');
+                    // Bot died after user retaliation. 
+                    nextTurn();
                 }
             } else {
                 setTurnState('USER_TURN');
@@ -210,12 +379,62 @@ const BattleArena: React.FC = () => {
 
         if (!freshUser || freshUser.currentHp <= 0) return;
 
-        const randomMove = freshBot.moves[Math.floor(Math.random() * freshBot.moves.length)];
-        const thought = await generateBattleThought(freshBot.name, freshUser.name, randomMove.name);
-        addLog(`[NEURAL LINK]: ${thought}`);
+        // === STRATEGIC AI BASED ON DIFFICULTY ===
+        let chosenMove;
+        let reasoningLog = "";
 
-        await executeMove(freshBot, freshUser, randomMove, false);
+        if (difficulty === 'EASY') {
+            // EASY: Random move selection
+            chosenMove = freshBot.moves[Math.floor(Math.random() * freshBot.moves.length)];
+            reasoningLog = `[EASY AI] Randomly selected ${chosenMove.name}.`;
+        } else if (difficulty === 'NORMAL') {
+            // NORMAL: Pick the highest damage move
+            chosenMove = selectBestMove(freshBot, freshUser);
+            const effectiveness = getTypeEffectiveness(chosenMove.type, freshUser.types);
+            const effectLabel = effectiveness > 1 ? "SUPER EFFECTIVE" : effectiveness < 1 ? "resisted" : "neutral";
+            reasoningLog = `[NORMAL AI] Selected ${chosenMove.name} (${chosenMove.type.toUpperCase()}) - ${effectLabel} vs ${freshUser.types.join('/')}.`;
+        } else {
+            // HARD: Consider switching first, then pick best move
+            const freshBotTeam = useGameStore.getState().botTeam;
+            const switchIndex = findBestSwitchIn(freshBotTeam, freshUser, activeBotIndex);
+
+            if (switchIndex !== -1) {
+                addLog(`[HARD AI] Current matchup unfavorable. Switching out ${freshBot.name}...`);
+                addLog(`Deploying ${freshBotTeam[switchIndex].name} for type advantage!`);
+                setActiveBotIndex(switchIndex);
+                setTurnState('USER_TURN');
+                return; // End turn after switching
+            }
+
+            chosenMove = selectBestMove(freshBot, freshUser);
+            const effectiveness = getTypeEffectiveness(chosenMove.type, freshUser.types);
+            const effectLabel = effectiveness > 1 ? "SUPER EFFECTIVE" : effectiveness < 1 ? "resisted" : "neutral";
+            const hasStab = freshBot.types.map(t => t.toLowerCase()).includes(chosenMove.type.toLowerCase());
+            reasoningLog = `[HARD AI] Optimal move: ${chosenMove.name} (${effectLabel}${hasStab ? ", STAB" : ""}).`;
+        }
+
+        addLog(reasoningLog);
+
+        await executeMove(freshBot, freshUser, chosenMove, false);
         setTurnState('USER_TURN');
+        nextTurn(); // Bot moved (last in sequence if User went first? Wait...)
+        // Reference: triggerBotTurn is called when:
+        // 1. User went first, Bot survived. (Round End) -> Increment here.
+        // 2. Bot goes first (handled in handleUserMove else block). 
+        //    If Bot goes first, triggerBotTurn is NOT called independently there, logic is inline.
+        //    BUT, triggerBotTurn IS called if User switches?
+
+        // Correct Logic: 
+        // If User Moved First -> Bot Turn (triggerBotTurn) -> End of Round.
+        // If Bot Moved First (inside handleUserMove) -> User Turn -> End of Round.
+        // So yes, if triggerBotTurn finishes, it's end of round IF user moved first.
+        // But triggerBotTurn is also called after a Switch.
+        // If Switch -> Bot Turn -> New Round? 
+        // In Pokemon, Switch takes the turn. So Switch -> Bot Move -> End of Round.
+        // So yes, triggerBotTurn implies end of round.
+
+
+        // So yes, triggerBotTurn implies end of round.
     };
 
     const handleSwitch = (newIndex: number) => {
@@ -236,7 +455,25 @@ const BattleArena: React.FC = () => {
     const getCategoryIcon = (category: string) => {
         if (category === 'physical') return <img src={physicalIcon} alt="Physical" className="w-8 h-8 object-contain opacity-90" />;
         if (category === 'special') return <img src={specialIcon} alt="Special" className="w-8 h-8 object-contain opacity-90" />;
-        return <CircleDot className="w-6 h-6 opacity-70" />;
+        return <img src={statusIcon} alt="Status" className="w-8 h-8 object-contain opacity-90" />;
+    };
+
+    const getStatusBadge = (status: string | null) => {
+        if (!status) return null;
+        const statusStyles: Record<string, { bg: string; text: string; label: string }> = {
+            burn: { bg: 'bg-orange-600', text: 'text-orange-100', label: 'BRN' },
+            poison: { bg: 'bg-purple-600', text: 'text-purple-100', label: 'PSN' },
+            paralysis: { bg: 'bg-yellow-500', text: 'text-yellow-900', label: 'PAR' },
+            sleep: { bg: 'bg-slate-400', text: 'text-slate-900', label: 'SLP' },
+            freeze: { bg: 'bg-cyan-400', text: 'text-cyan-900', label: 'FRZ' },
+        };
+        const style = statusStyles[status];
+        if (!style) return null;
+        return (
+            <span className={`${style.bg} ${style.text} px-1.5 py-0.5 rounded text-[10px] font-bold uppercase shadow-sm animate-pulse`}>
+                {style.label}
+            </span>
+        );
     };
 
     if (!userMon || !botMon) return <div className="text-white">Loading Arena...</div>;
@@ -266,8 +503,11 @@ const BattleArena: React.FC = () => {
                     {/* OPPONENT */}
                     <div className="absolute top-[15%] right-[10%] z-10 flex flex-col items-end">
                         <div className="bg-slate-900/90 border border-slate-600 rounded-lg p-2 mb-2 w-64 shadow-lg transform translate-x-4">
-                            <div className="flex justify-between items-baseline mb-1">
-                                <span className="font-bold text-lg">{botMon.name}</span>
+                            <div className="flex justify-between items-center mb-1">
+                                <div className="flex items-center gap-2">
+                                    <span className="font-bold text-lg">{botMon.name}</span>
+                                    {getStatusBadge(botMon.statusEffect)}
+                                </div>
                                 <span className="text-xs text-slate-400">L100</span>
                             </div>
                             <div className="flex gap-1 mb-1 justify-end">
@@ -285,7 +525,7 @@ const BattleArena: React.FC = () => {
                             <Sprite
                                 src={botMon.spriteUrl}
                                 alt={botMon.name}
-                                className={`w-48 h-48 object-contain relative z-10 drop-shadow-2xl transition-transform duration-300 ${isBotAttacking ? '-translate-x-32 translate-y-16' : ''}`}
+                                className={`w-48 h-48 object-contain relative z-10 drop-shadow-2xl transition-all duration-300 ${isBotAttacking ? '-translate-x-32 translate-y-16' : ''} ${isBotHit ? 'animate-[shake_0.3s_ease-in-out] brightness-200' : ''}`}
                             />
                         </div>
                     </div>
@@ -298,12 +538,15 @@ const BattleArena: React.FC = () => {
                                 src={userMon.spriteUrl}
                                 alt={userMon.name}
                                 isBack
-                                className={`w-64 h-64 object-contain relative z-10 drop-shadow-2xl transition-transform duration-300 ${isUserAttacking ? 'translate-x-32 -translate-y-16' : ''}`}
+                                className={`w-64 h-64 object-contain relative z-10 drop-shadow-2xl transition-all duration-300 ${isUserAttacking ? 'translate-x-32 -translate-y-16' : ''} ${isUserHit ? 'animate-[shake_0.3s_ease-in-out] brightness-200' : ''}`}
                             />
                         </div>
                         <div className="bg-slate-900/90 border border-slate-600 rounded-lg p-3 w-72 shadow-lg transform -translate-x-4">
-                            <div className="flex justify-between items-baseline mb-1">
-                                <span className="font-bold text-xl">{userMon.name}</span>
+                            <div className="flex justify-between items-center mb-1">
+                                <div className="flex items-center gap-2">
+                                    <span className="font-bold text-xl">{userMon.name}</span>
+                                    {getStatusBadge(userMon.statusEffect)}
+                                </div>
                                 <span className="text-xs text-slate-400">L100</span>
                             </div>
                             <div className="flex gap-1 mb-1">
@@ -385,17 +628,18 @@ const BattleArena: React.FC = () => {
                                 <div className="grid grid-cols-2 gap-3 max-w-3xl flex-1">
                                     {userMon.moves.map((move, idx) => {
                                         const typeColor = typeColours[move.type.toLowerCase()] || '#A8A77A';
+                                        const isOutOfPp = move.currentPp <= 0;
 
                                         return (
                                             <button
                                                 key={idx}
-                                                disabled={turnState !== 'USER_TURN'}
+                                                disabled={turnState !== 'USER_TURN' || isOutOfPp}
                                                 onClick={() => { handleUserMove(move); setMenuMode('MAIN'); }}
-                                                style={{ backgroundColor: typeColor }}
+                                                style={{ backgroundColor: isOutOfPp ? '#555' : typeColor }}
                                                 className={`
                                                 relative overflow-hidden group rounded-lg border-2 border-black/20
                                                 transition-all duration-200 shadow-md text-left
-                                                ${turnState === 'USER_TURN'
+                                                ${turnState === 'USER_TURN' && !isOutOfPp
                                                         ? 'hover:scale-[1.02] hover:shadow-lg hover:brightness-110 cursor-pointer'
                                                         : 'opacity-50 grayscale cursor-not-allowed'}
                                             `}
@@ -415,8 +659,13 @@ const BattleArena: React.FC = () => {
                                                         <span className="px-2 py-0.5 bg-black/30 rounded text-xs font-bold text-white/90 backdrop-blur-md uppercase border border-white/10">
                                                             {move.type}
                                                         </span>
-                                                        <div className="text-xs font-mono text-white/90 bg-black/30 px-2 py-0.5 rounded border border-white/10">
-                                                            POW: {move.power || '-'}
+                                                        <div className="flex gap-2">
+                                                            <div className="text-xs font-mono text-white/90 bg-black/30 px-2 py-0.5 rounded border border-white/10">
+                                                                PP: {move.currentPp}/{move.pp}
+                                                            </div>
+                                                            <div className="text-xs font-mono text-white/90 bg-black/30 px-2 py-0.5 rounded border border-white/10">
+                                                                POW: {move.power || '-'}
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -476,25 +725,46 @@ const BattleArena: React.FC = () => {
                     </div>
 
                     {/* RIGHT: BATTLE LOG */}
-                    <div className={`w-[400px] border-l-2 ${diffStyle.border} bg-black/80 flex flex-col relative shadow-[-10px_0_20px_rgba(0,0,0,0.5)]`}>
-                        <div className={`bg-slate-900 text-slate-400 text-xs px-3 py-1 font-mono uppercase tracking-widest border-b border-slate-800 flex justify-between items-center z-10`}>
-                            <span>Neural Link v2.0</span>
-                            <div className="flex gap-1">
-                                <div className="w-2 h-2 rounded-full bg-red-500 opacity-50" />
-                                <div className="w-2 h-2 rounded-full bg-yellow-500 opacity-50" />
-                                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                            </div>
-                        </div>
-                        <div className="flex-1 overflow-hidden relative">
-                            <NeuralLink />
-                        </div>
-                        <div className="p-2 border-t border-slate-800 bg-slate-950 z-10">
-                            <div className="flex items-center gap-2 text-slate-500 font-mono text-sm">
-                                <span className={`pointer-events-none ${diffStyle.text}`}>{'>'}</span>
-                                <span className="animate-pulse">_</span>
-                            </div>
-                        </div>
+                    <div className={`${isLogExpanded ? 'w-[400px]' : 'w-12'} border-l-2 ${diffStyle.border} bg-black/90 flex flex-col relative shadow-[-10px_0_20px_rgba(0,0,0,0.5)] transition-all duration-300 z-50 h-full`}>
+                        <button
+                            onClick={() => setIsLogExpanded(!isLogExpanded)}
+                            className={`bg-slate-900 text-slate-400 text-xs px-3 py-1 font-mono uppercase tracking-widest border-b border-slate-800 flex justify-between items-center z-10 hover:bg-slate-800 cursor-pointer w-full`}
+                        >
+                            {isLogExpanded ? (
+                                <>
+                                    <span>Battle Log</span>
+                                    <div className="flex gap-1 items-center">
+                                        <span className="text-[10px] opacity-50">▶</span>
+                                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                                    </div>
+                                </>
+                            ) : (
+                                <span className="transform -rotate-90 whitespace-nowrap mt-4 block">LOG</span>
+                            )}
+                        </button>
+                        {isLogExpanded && (
+                            <>
+                                <div className="flex-1 overflow-y-auto p-3 space-y-1 font-mono text-xs">
+                                    {battleLog.map((log, i) => {
+                                        // Simple time if needed, or just log
+                                        return (
+                                            <div key={i} className="text-slate-300 leading-relaxed flex gap-2">
+                                                <span><span className={`${diffStyle.text}`}>&gt;</span> {log}</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                <div className="p-2 border-t border-slate-800 bg-slate-950 z-10">
+                                    <div className="flex items-center gap-2 text-slate-500 font-mono text-sm">
+                                        <span className={`pointer-events-none ${diffStyle.text}`}>{'>'}</span>
+                                        <span className="animate-pulse">_</span>
+                                    </div>
+                                </div>
+                            </>
+                        )}
                     </div>
+
+
                 </div>
 
                 {/* Switch Modal */}

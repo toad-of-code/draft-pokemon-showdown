@@ -56,15 +56,80 @@ const GameOverScreen: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Team Display */}
-                <div className="flex gap-4 justify-center mb-12">
+                {/* MVP Highlight */}
+                <div className="mb-12">
+                    <h3 className="text-xl font-bold text-yellow-500 mb-4 uppercase tracking-widest">Match MVP</h3>
+                    {(() => {
+                        const allPokemon = [...userTeam, ...botTeam];
+                        const mvp = allPokemon.reduce((prev, current) =>
+                            (current.battleStats.kills > prev.battleStats.kills ||
+                                (current.battleStats.kills === prev.battleStats.kills && current.battleStats.damageDealt > prev.battleStats.damageDealt))
+                                ? current : prev
+                            , allPokemon[0]);
+
+                        return (
+                            <div className="bg-gradient-to-br from-yellow-500/20 to-orange-500/20 border border-yellow-500/50 rounded-xl p-4 inline-flex items-center gap-4">
+                                <img src={mvp.spriteUrl} alt={mvp.name} className="w-16 h-16 object-contain drop-shadow-lg" />
+                                <div className="text-left">
+                                    <p className="font-black text-white text-lg">{mvp.name}</p>
+                                    <p className="text-yellow-400 text-sm font-mono">{mvp.battleStats.kills} Kills • {mvp.battleStats.damageDealt} Dmg</p>
+                                </div>
+                            </div>
+                        );
+                    })()}
+                </div>
+
+                {/* Team Stats Summary */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12 max-w-5xl mx-auto w-full px-4">
+                    {/* User Team Stats */}
+                    <div className="bg-slate-900/50 rounded-xl p-6 border border-slate-800">
+                        <h3 className="text-cyan-400 font-bold mb-4 border-b border-slate-800 pb-2">YOUR TEAM</h3>
+                        <div className="space-y-3">
+                            {userTeam.map(p => (
+                                <div key={p.id} className="flex items-center justify-between bg-slate-800/30 p-2 rounded">
+                                    <div className="flex items-center gap-2">
+                                        <img src={p.spriteUrl} className="w-8 h-8 opacity-75" />
+                                        <span className={`text-sm font-bold ${p.currentHp === 0 ? 'text-slate-500 line-through' : 'text-slate-300'}`}>{p.name}</span>
+                                    </div>
+                                    <div className="text-xs font-mono text-slate-400 flex gap-3">
+                                        <span title="Damage Dealt" className="text-green-400">dmg: {p.battleStats.damageDealt}</span>
+                                        <span title="Damage Taken" className="text-red-400">taken: {p.battleStats.damageTaken}</span>
+                                        <span title="Kills" className="text-yellow-400 px-1 border border-yellow-500/30 rounded bg-yellow-500/10">{p.battleStats.kills} K</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Enemy Team Stats */}
+                    <div className="bg-slate-900/50 rounded-xl p-6 border border-slate-800">
+                        <h3 className="text-red-400 font-bold mb-4 border-b border-slate-800 pb-2">ENEMY TEAM</h3>
+                        <div className="space-y-3">
+                            {botTeam.map(p => (
+                                <div key={p.id} className="flex items-center justify-between bg-slate-800/30 p-2 rounded">
+                                    <div className="flex items-center gap-2">
+                                        <img src={p.spriteUrl} className="w-8 h-8 opacity-75" />
+                                        <span className={`text-sm font-bold ${p.currentHp === 0 ? 'text-slate-500 line-through' : 'text-slate-300'}`}>{p.name}</span>
+                                    </div>
+                                    <div className="text-xs font-mono text-slate-400 flex gap-3">
+                                        <span title="Damage Dealt" className="text-green-400">dmg: {p.battleStats.damageDealt}</span>
+                                        <span title="Damage Taken" className="text-red-400">taken: {p.battleStats.damageTaken}</span>
+                                        <span title="Kills" className="text-yellow-400 px-1 border border-yellow-500/30 rounded bg-yellow-500/10">{p.battleStats.kills} K</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Team Display (Simple) - Keeping as footer */}
+                <div className="flex gap-4 justify-center mb-12 opacity-50">
                     {userTeam.map((pokemon) => (
                         <div
                             key={pokemon.id}
-                            className={`p-2 rounded-lg border ${pokemon.currentHp > 0 ? 'border-cyan-500/50 bg-cyan-500/10' : 'border-slate-700 bg-slate-800/50 opacity-50 grayscale'}`}
+                            className={`p-2 rounded-lg border ${pokemon.currentHp > 0 ? 'border-cyan-500/50 bg-cyan-500/10' : 'border-slate-700 bg-slate-800/50 grayscale'}`}
                         >
-                            <img src={pokemon.spriteUrl} alt={pokemon.name} className="w-16 h-16 object-contain" />
-                            <p className="text-xs font-bold truncate max-w-[70px]">{pokemon.name}</p>
+                            <img src={pokemon.spriteUrl} alt={pokemon.name} className="w-10 h-10 object-contain" />
                         </div>
                     ))}
                 </div>
