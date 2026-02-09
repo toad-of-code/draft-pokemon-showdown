@@ -117,7 +117,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📄 License
 
-This project is open source. [Add License Link Here]
+This project is open source.
 
 ---
 
