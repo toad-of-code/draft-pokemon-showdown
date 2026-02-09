@@ -4,8 +4,10 @@ import type { BattlePokemon, BattleMove } from '../../store/useGameStore';
 import { calculateDamage } from '../../utils/battleLogic';
 import Sprite from './Sprite';
 import NeuralLink from './NeuralLink';
-import { X } from 'lucide-react';
+import { X, CircleDot, ArrowLeft, RefreshCw, Sword } from 'lucide-react';
 import { generateBattleThought } from '../../api/geminiAgent';
+import physicalIcon from '../../assets/physical_move_icon_by_jormxdos_dfgb60u-fullview.png';
+import specialIcon from '../../assets/special_move_icon_by_jormxdos_dfgb60n-fullview.png';
 
 const BattleArena: React.FC = () => {
     const {
@@ -20,6 +22,36 @@ const BattleArena: React.FC = () => {
     const [isUserAttacking, setIsUserAttacking] = useState(false);
     const [isBotAttacking, setIsBotAttacking] = useState(false);
     const [menuMode, setMenuMode] = useState<'MAIN' | 'FIGHT' | 'PKMN'>('MAIN');
+
+    // Difficulty Color Mapping
+    const difficultyColors = {
+        EASY: { text: 'text-green-400', border: 'border-green-500', shadow: 'shadow-green-500/20', bg: 'bg-green-500/10' },
+        NORMAL: { text: 'text-yellow-400', border: 'border-yellow-500', shadow: 'shadow-yellow-500/20', bg: 'bg-yellow-500/10' },
+        HARD: { text: 'text-red-500', border: 'border-red-600', shadow: 'shadow-red-500/20', bg: 'bg-red-500/10' }
+    };
+    const diffStyle = difficultyColors[difficulty as keyof typeof difficultyColors] || difficultyColors.NORMAL;
+
+    // Standard Type Hex Codes
+    const typeColours: Record<string, string> = {
+        normal: '#A8A77A',
+        fire: '#EE8130',
+        water: '#6390F0',
+        electric: '#F7D02C',
+        grass: '#7AC74C',
+        ice: '#96D9D6',
+        fighting: '#C22E28',
+        poison: '#A33EA1',
+        ground: '#E2BF65',
+        flying: '#A98FF3',
+        psychic: '#F95587',
+        bug: '#A6B91A',
+        rock: '#B6A136',
+        ghost: '#735797',
+        dragon: '#6F35FC',
+        dark: '#705746',
+        steel: '#B7B7CE',
+        fairy: '#D685AD',
+    };
 
     // Random battle background
     const [battleBg] = useState(() => {
@@ -66,45 +98,38 @@ const BattleArena: React.FC = () => {
 
 
     const executeMove = async (attacker: BattlePokemon, defender: BattlePokemon, move: BattleMove, isUserAttacker: boolean) => {
+        // Prevent moves if either is already dead (Fresh Check)
+        if (attacker.currentHp <= 0 || defender.currentHp <= 0) return;
+
+        if (move.accuracy !== null) {
+            const accuracyRoll = Math.random() * 100;
+            if (accuracyRoll > move.accuracy) {
+                addLog(`${attacker.name}'s attack missed!`);
+                return;
+            }
+        }
+
         addLog(`${attacker.name} used ${move.name}!`);
 
-        // Trigger attack animation
-        if (isUserAttacker) {
-            setIsUserAttacking(true);
-        } else {
-            setIsBotAttacking(true);
-        }
+        if (isUserAttacker) setIsUserAttacking(true);
+        else setIsBotAttacking(true);
 
-        // Wait for animation
         await new Promise(r => setTimeout(r, 400));
 
-        // Reset animation
-        if (isUserAttacker) {
-            setIsUserAttacking(false);
-        } else {
-            setIsBotAttacking(false);
-        }
+        if (isUserAttacker) setIsUserAttacking(false);
+        else setIsBotAttacking(false);
 
         await new Promise(r => setTimeout(r, 100));
 
         const result = calculateDamage(attacker, defender, move);
 
-        // EASY mode: Bot deals less damage, has miss chance
         let finalDamage = result.damage;
-        if (difficulty === 'EASY' && !isUserAttacker) {
-            // Bot has 15% chance to miss in EASY mode
-            if (Math.random() < 0.15) {
-                addLog(`${attacker.name}'s attack missed!`);
-                return;
-            }
-            // Bot deals only 70% damage
-            finalDamage = Math.floor(result.damage * 0.7);
+        if (!isUserAttacker) {
+            if (difficulty === 'EASY') finalDamage = Math.floor(result.damage * 0.7);
+            else if (difficulty === 'HARD') finalDamage = Math.floor(result.damage * 1.3);
         }
 
-        // Critical Hit?
         if (result.critical) addLog("Critical Hit!");
-
-        // Effectiveness?
         if (result.effectiveness > 1) addLog("It's super effective!");
         if (result.effectiveness < 1 && result.effectiveness > 0) addLog("It's not very effective...");
         if (result.effectiveness === 0) addLog("It had no effect...");
@@ -112,9 +137,8 @@ const BattleArena: React.FC = () => {
         const newHp = Math.max(0, defender.currentHp - finalDamage);
         updatePokemonHp(defender.id, newHp);
 
-        // Log damage percentage approx
-        const percentDmg = Math.floor((result.damage / defender.maxHp) * 100);
-        addLog(`(Target took ${percentDmg}% structural damage)`);
+        const percentDmg = Math.floor((finalDamage / defender.maxHp) * 100);
+        addLog(`(Target took ${percentDmg}% damage)`);
     };
 
     const getSpeed = (pokemon: BattlePokemon): number => {
@@ -127,17 +151,15 @@ const BattleArena: React.FC = () => {
 
         const userSpeed = getSpeed(userMon);
         const botSpeed = getSpeed(botMon);
-
-        // Speed tie = random, otherwise faster goes first
         const userGoesFirst = userSpeed > botSpeed || (userSpeed === botSpeed && Math.random() > 0.5);
 
         if (userGoesFirst) {
-            // User attacks first
             addLog(`${userMon.name} outspeeds! (SPD: ${userSpeed} vs ${botSpeed})`);
             await executeMove(userMon, botMon, move, true);
 
-            // Bot retaliates if still alive
-            if (botMon.currentHp > 0) {
+            // FIX: Check FRESH state from store, not the stale 'botMon' variable
+            const freshBot = useGameStore.getState().botTeam[activeBotIndex];
+            if (freshBot && freshBot.currentHp > 0) {
                 setTimeout(() => {
                     setTurnState('BOT_TURN');
                     triggerBotTurn();
@@ -146,361 +168,356 @@ const BattleArena: React.FC = () => {
                 setTurnState('USER_TURN');
             }
         } else {
-            // Bot attacks first!
             addLog(`Enemy ${botMon.name} outspeeds! (SPD: ${botSpeed} vs ${userSpeed})`);
-
-            // Bot picks a random move and attacks first
             const botMove = botMon.moves[Math.floor(Math.random() * botMon.moves.length)];
             const thought = await generateBattleThought(botMon.name, userMon.name, botMove.name);
             addLog(`[NEURAL LINK]: ${thought}`);
             await executeMove(botMon, userMon, botMove, false);
 
-            // Re-check user HP from store (userMon is stale reference)
-            const currentUserMon = userTeam[activeUserIndex];
-            if (currentUserMon.currentHp > 0) {
+            // FIX: Check FRESH state for user pokemon as well
+            const freshUser = useGameStore.getState().userTeam[activeUserIndex];
+            if (freshUser && freshUser.currentHp > 0) {
                 await new Promise(r => setTimeout(r, 500));
-                await executeMove(currentUserMon, botMon, move, true);
+                // We must also use the fresh reference for the attacker
+                await executeMove(freshUser, botMon, move, true);
 
-                // Bot's next turn if it survives
-                if (botMon.currentHp > 0) {
-                    setTimeout(() => {
-                        setTurnState('USER_TURN');
-                    }, 1000);
+                // Re-check bot health after retaliation
+                const freshBotAfter = useGameStore.getState().botTeam[activeBotIndex];
+                if (freshBotAfter && freshBotAfter.currentHp > 0) {
+                    setTimeout(() => setTurnState('USER_TURN'), 1000);
                 } else {
                     setTurnState('USER_TURN');
                 }
             } else {
-                // User fainted, will be handled by useEffect
                 setTurnState('USER_TURN');
             }
         }
     };
 
     const triggerBotTurn = async (overrideUserIndex?: number) => {
-        // Bot "Thinking" Simulation
         addLog("Enemy AI analyzing tactical options...");
         await new Promise(r => setTimeout(r, 1500));
 
-        if (botTeam[activeBotIndex].currentHp <= 0) return; // Verify bot still alive
+        // FIX: Get FRESH bot reference
+        const freshBot = useGameStore.getState().botTeam[activeBotIndex];
 
-        const activeBot = botTeam[activeBotIndex];
-        // Use override index if provided (for after switch), otherwise use current
+        // Double check liveliness before acting
+        if (!freshBot || freshBot.currentHp <= 0) return;
+
         const targetUserIndex = overrideUserIndex !== undefined ? overrideUserIndex : activeUserIndex;
-        const activeUser = userTeam[targetUserIndex];
+        // FIX: Get FRESH user reference
+        const freshUser = useGameStore.getState().userTeam[targetUserIndex];
 
-        if (!activeUser || activeUser.currentHp <= 0) return; // Verify user still alive
+        if (!freshUser || freshUser.currentHp <= 0) return;
 
-        const randomMove = activeBot.moves[Math.floor(Math.random() * activeBot.moves.length)];
-
-        // Generate thought
-        const thought = await generateBattleThought(activeBot.name, activeUser.name, randomMove.name);
+        const randomMove = freshBot.moves[Math.floor(Math.random() * freshBot.moves.length)];
+        const thought = await generateBattleThought(freshBot.name, freshUser.name, randomMove.name);
         addLog(`[NEURAL LINK]: ${thought}`);
 
-        await executeMove(activeBot, activeUser, randomMove, false);
-
+        await executeMove(freshBot, freshUser, randomMove, false);
         setTurnState('USER_TURN');
     };
 
     const handleSwitch = (newIndex: number) => {
-        if (turnState !== 'USER_TURN') return; // Can only switch on user's turn
+        if (turnState !== 'USER_TURN') return;
         if (newIndex === activeUserIndex || userTeam[newIndex].currentHp <= 0) return;
 
-        setTurnState('PROCESSING'); // Block further input
+        setTurnState('PROCESSING');
         addLog(`${userMon.name} returned! Go ${userTeam[newIndex].name}!`);
         setActiveUserIndex(newIndex);
         setShowSwitchModal(false);
 
-        // Switching costs a turn - bot attacks after
-        // Pass newIndex so bot attacks the NEW pokemon, not the old one
         setTimeout(() => {
             setTurnState('BOT_TURN');
             triggerBotTurn(newIndex);
         }, 1000);
     };
 
+    const getCategoryIcon = (category: string) => {
+        if (category === 'physical') return <img src={physicalIcon} alt="Physical" className="w-8 h-8 object-contain opacity-90" />;
+        if (category === 'special') return <img src={specialIcon} alt="Special" className="w-8 h-8 object-contain opacity-90" />;
+        return <CircleDot className="w-6 h-6 opacity-70" />;
+    };
+
     if (!userMon || !botMon) return <div className="text-white">Loading Arena...</div>;
 
     return (
-        <div className="h-screen w-full bg-slate-950 flex flex-col text-slate-200 font-sans overflow-hidden">
+        <div className="h-screen w-full bg-slate-950 flex flex-col text-slate-200 font-sans overflow-hidden relative">
 
-            {/* 1. BATTLE FIELD (Top 70%) */}
-            <div className="flex-1 relative border-b-4 border-slate-950 shadow-inner overflow-hidden">
-                {/* Background Image */}
-                <div
-                    className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-                    style={{ backgroundImage: `url('${battleBg}')` }}
-                />
-                {/* Dark overlay for better visibility */}
-                <div className="absolute inset-0 bg-black/30" />
-                <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/40 pointer-events-none" />
+            {/* 0. FULL SCREEN BACKGROUND LAYER */}
+            <div
+                className="fixed inset-0 bg-cover bg-center bg-no-repeat z-0 transition-all duration-1000 ease-in-out"
+                style={{ backgroundImage: `url('${battleBg}')` }}
+            />
+            <div className="fixed inset-0 bg-black/40 z-0" />
 
-                {/* --- OPPONENT (Top Right) --- */}
-                <div className="absolute top-[15%] right-[10%] z-10 flex flex-col items-end">
-                    {/* HUD */}
-                    <div className="bg-slate-900/90 border border-slate-600 rounded-lg p-2 mb-2 w-64 shadow-lg transform translate-x-4">
-                        <div className="flex justify-between items-baseline mb-1">
-                            <span className="font-bold text-lg">{botMon.name}</span>
-                            <span className="text-xs text-slate-400">L100</span>
-                        </div>
-                        <HPBar pokemon={botMon} />
-                    </div>
-                    {/* Sprite Platform & Sprite */}
-                    <div className="relative">
-                        <div className="w-56 h-16 bg-black/40 rounded-[100%] absolute bottom-2 blur-md transform scale-x-125 skew-x-12" />
-                        <Sprite
-                            src={botMon.spriteUrl}
-                            alt={botMon.name}
-                            className={`w-48 h-48 object-contain relative z-10 drop-shadow-2xl transition-transform duration-300 ${isBotAttacking ? '-translate-x-32 translate-y-16' : ''}`}
-                        />
-                    </div>
-                </div>
+            {/* Content Wrapper (z-10 to sit above background) */}
+            <div className="relative z-10 flex flex-col h-full">
 
-                {/* --- PLAYER (Bottom Left) --- */}
-                <div className="absolute bottom-[5%] left-[10%] z-20 flex flex-col items-start h-[300px] justify-end">
-                    {/* Sprite Platform & Sprite */}
-                    <div className="relative mb-4">
-                        <div className="w-64 h-20 bg-black/40 rounded-[100%] absolute bottom-2 blur-md transform scale-x-125 -skew-x-12" />
-                        <Sprite
-                            src={userMon.spriteUrl}
-                            alt={userMon.name}
-                            isBack
-                            className={`w-64 h-64 object-contain relative z-10 drop-shadow-2xl transition-transform duration-300 ${isUserAttacking ? 'translate-x-32 -translate-y-16' : ''}`}
-                        />
-                    </div>
-                    {/* HUD */}
-                    <div className="bg-slate-900/90 border border-slate-600 rounded-lg p-3 w-72 shadow-lg transform -translate-x-4">
-                        <div className="flex justify-between items-baseline mb-1">
-                            <span className="font-bold text-xl">{userMon.name}</span>
-                            <span className="text-xs text-slate-400">L100</span>
-                        </div>
-                        <HPBar pokemon={userMon} showNumbers />
-                    </div>
-                </div>
-            </div>
-
-            {/* 2. CONTROLS CONSOLE (Bottom 30%) */}
-            <div className="h-[320px] bg-slate-950 flex border-t border-slate-700 shadow-2xl z-30">
-
-                {/* LEFT: ACTION PANEL */}
-                <div className="flex-1 p-6 relative flex flex-col">
-                    <div className="absolute inset-0 bg-slate-900/50 skew-x-12 -ml-20 w-1/2 opacity-20 pointer-events-none" />
-
-                    {/* Message / Prompt */}
-                    <div className="mb-4 text-xl font-bold text-white tracking-wide border-l-4 border-yellow-500 pl-4 h-10 flex items-center bg-black/20">
-                        {turnState === 'USER_TURN'
-                            ? `What will ${userMon.name} do?`
-                            : turnState === 'BOT_TURN'
-                                ? `Waiting for ${botMon.name}...`
-                                : turnState === 'GAME_OVER'
-                                    ? 'COMBAT ENDED'
-                                    : 'Processing...'}
+                {/* 1. BATTLE FIELD */}
+                <div className="flex-1 relative">
+                    <div className={`absolute top-4 left-4 z-20 px-4 py-1.5 rounded-full border ${diffStyle.border} ${diffStyle.bg} backdrop-blur-md shadow-lg flex items-center gap-2`}>
+                        <div className={`w-2 h-2 rounded-full ${diffStyle.bg.replace('/10', '')} animate-pulse`} />
+                        <span className={`font-black text-xs tracking-[0.2em] uppercase ${diffStyle.text}`}>
+                            Mode: {difficulty}
+                        </span>
                     </div>
 
-                    {/* Main Menu / Fight / PKMN conditional rendering */}
-                    {menuMode === 'MAIN' && (
-                        <div className="grid grid-cols-2 gap-3 max-w-md">
-                            {/* FIGHT Button */}
-                            <button
-                                disabled={turnState !== 'USER_TURN'}
-                                onClick={() => setMenuMode('FIGHT')}
-                                className={`
-                                    p-6 rounded-lg border-2 text-center transition-all duration-200
-                                    flex flex-col items-center justify-center gap-2
-                                    ${turnState === 'USER_TURN'
-                                        ? 'bg-red-900/60 border-red-500 hover:bg-red-800 hover:border-red-400 hover:-translate-y-1 shadow-lg hover:shadow-red-500/30'
-                                        : 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed grayscale'}
-                                `}
-                            >
-                                <span className="font-black text-2xl uppercase tracking-tight">FIGHT</span>
-                            </button>
-
-                            {/* PKMN Button */}
-                            <button
-                                disabled={turnState !== 'USER_TURN' || userTeam.filter(p => p.currentHp > 0).length <= 1}
-                                onClick={() => setMenuMode('PKMN')}
-                                className={`
-                                    p-6 rounded-lg border-2 text-center transition-all duration-200
-                                    flex flex-col items-center justify-center gap-2
-                                    ${turnState === 'USER_TURN' && userTeam.filter(p => p.currentHp > 0).length > 1
-                                        ? 'bg-cyan-900/60 border-cyan-500 hover:bg-cyan-800 hover:border-cyan-400 hover:-translate-y-1 shadow-lg hover:shadow-cyan-500/30'
-                                        : 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed grayscale'}
-                                `}
-                            >
-                                <span className="font-black text-2xl uppercase tracking-tight">PKMN</span>
-                            </button>
-                        </div>
-                    )}
-
-                    {/* FIGHT MODE: Show Moves */}
-                    {menuMode === 'FIGHT' && (
-                        <div className="flex flex-col gap-2">
-                            <button
-                                onClick={() => setMenuMode('MAIN')}
-                                className="text-sm text-slate-400 hover:text-white flex items-center gap-1 mb-2"
-                            >
-                                ← Back
-                            </button>
-                            <div className="grid grid-cols-2 gap-2 max-w-2xl">
-                                {userMon.moves.map((move, idx) => (
-                                    <button
-                                        key={idx}
-                                        disabled={turnState !== 'USER_TURN'}
-                                        onClick={() => { handleUserMove(move); setMenuMode('MAIN'); }}
-                                        className={`
-                                            relative overflow-hidden group
-                                            p-3 rounded-md border text-left transition-all duration-200
-                                            flex flex-col justify-center
-                                            ${turnState === 'USER_TURN'
-                                                ? 'bg-slate-800 border-slate-600 hover:bg-slate-700 hover:border-yellow-400 hover:-translate-y-1 hover:shadow-yellow-500/20 shadow-lg'
-                                                : 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed grayscale'}
-                                        `}
-                                    >
-                                        <div className="flex justify-between items-center z-10 relative">
-                                            <span className="font-black text-lg uppercase tracking-tight">{move.name}</span>
-                                            <span className="text-xs font-mono px-2 py-1 rounded bg-black/40 text-slate-300 border border-slate-700">{move.type}</span>
-                                        </div>
-                                        <div className="text-xs text-slate-400 mt-1 z-10 relative font-mono">
-                                            POW: <span className="text-white">{move.power || '-'}</span> | ACC: <span className="text-white">{move.accuracy}%</span>
-                                        </div>
-                                        <div className="absolute inset-0 bg-gradient-to-r from-yellow-500/0 via-yellow-500/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 pointer-events-none" />
-                                    </button>
+                    {/* OPPONENT */}
+                    <div className="absolute top-[15%] right-[10%] z-10 flex flex-col items-end">
+                        <div className="bg-slate-900/90 border border-slate-600 rounded-lg p-2 mb-2 w-64 shadow-lg transform translate-x-4">
+                            <div className="flex justify-between items-baseline mb-1">
+                                <span className="font-bold text-lg">{botMon.name}</span>
+                                <span className="text-xs text-slate-400">L100</span>
+                            </div>
+                            <div className="flex gap-1 mb-1 justify-end">
+                                {botMon.types.map(t => (
+                                    <span key={t} style={{ backgroundColor: typeColours[t.toLowerCase()] }} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white uppercase shadow-sm">
+                                        {t}
+                                    </span>
                                 ))}
                             </div>
+                            <HPBar pokemon={botMon} />
+                            <TeamHealthIndicator team={botTeam} />
                         </div>
-                    )}
+                        <div className="relative">
+                            <div className="w-56 h-16 bg-black/40 rounded-[100%] absolute bottom-2 blur-md transform scale-x-125 skew-x-12" />
+                            <Sprite
+                                src={botMon.spriteUrl}
+                                alt={botMon.name}
+                                className={`w-48 h-48 object-contain relative z-10 drop-shadow-2xl transition-transform duration-300 ${isBotAttacking ? '-translate-x-32 translate-y-16' : ''}`}
+                            />
+                        </div>
+                    </div>
 
-                    {/* PKMN MODE: Show Team for Switching */}
-                    {menuMode === 'PKMN' && (
-                        <div className="flex flex-col gap-2">
-                            <button
-                                onClick={() => setMenuMode('MAIN')}
-                                className="text-sm text-slate-400 hover:text-white flex items-center gap-1 mb-2"
-                            >
-                                ← Back
-                            </button>
-                            <div className="grid grid-cols-3 gap-2 max-w-2xl">
-                                {userTeam.map((pokemon, idx) => {
-                                    const isActive = idx === activeUserIndex;
-                                    const isFainted = pokemon.currentHp <= 0;
-                                    const hpPercent = (pokemon.currentHp / pokemon.maxHp) * 100;
-
-                                    return (
-                                        <button
-                                            key={pokemon.id}
-                                            disabled={isActive || isFainted}
-                                            onClick={() => { handleSwitch(idx); setMenuMode('MAIN'); }}
-                                            className={`
-                                                p-2 rounded-lg border-2 text-center transition-all flex flex-col items-center
-                                                ${isActive ? 'border-yellow-500 bg-yellow-500/20' :
-                                                    isFainted ? 'border-slate-800 bg-slate-900 opacity-50' :
-                                                        'border-cyan-600 bg-slate-800 hover:border-cyan-400 hover:bg-slate-700'}
-                                            `}
-                                        >
-                                            <img src={pokemon.spriteUrl} alt={pokemon.name} className="w-12 h-12 object-contain" />
-                                            <span className="text-xs font-bold truncate w-full">{pokemon.name}</span>
-                                            <div className="w-full h-1 bg-slate-700 rounded-full overflow-hidden mt-1">
-                                                <div
-                                                    className={`h-full ${hpPercent > 50 ? 'bg-green-500' : hpPercent > 20 ? 'bg-yellow-400' : 'bg-red-500'}`}
-                                                    style={{ width: `${hpPercent}%` }}
-                                                />
-                                            </div>
-                                            {isActive && <span className="text-[10px] text-yellow-400">ACTIVE</span>}
-                                            {isFainted && <span className="text-[10px] text-red-400">FAINTED</span>}
-                                        </button>
-                                    );
-                                })}
+                    {/* PLAYER */}
+                    <div className="absolute bottom-[5%] left-[10%] z-20 flex flex-col items-start h-[300px] justify-end">
+                        <div className="relative mb-4">
+                            <div className="w-64 h-20 bg-black/40 rounded-[100%] absolute bottom-2 blur-md transform scale-x-125 -skew-x-12" />
+                            <Sprite
+                                src={userMon.spriteUrl}
+                                alt={userMon.name}
+                                isBack
+                                className={`w-64 h-64 object-contain relative z-10 drop-shadow-2xl transition-transform duration-300 ${isUserAttacking ? 'translate-x-32 -translate-y-16' : ''}`}
+                            />
+                        </div>
+                        <div className="bg-slate-900/90 border border-slate-600 rounded-lg p-3 w-72 shadow-lg transform -translate-x-4">
+                            <div className="flex justify-between items-baseline mb-1">
+                                <span className="font-bold text-xl">{userMon.name}</span>
+                                <span className="text-xs text-slate-400">L100</span>
+                            </div>
+                            <div className="flex gap-1 mb-1">
+                                {userMon.types.map(t => (
+                                    <span key={t} style={{ backgroundColor: typeColours[t.toLowerCase()] }} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white uppercase shadow-sm">
+                                        {t}
+                                    </span>
+                                ))}
+                            </div>
+                            <HPBar pokemon={userMon} showNumbers />
+                            <div className="flex justify-start"> {/* Align player indicators to left */}
+                                <TeamHealthIndicator team={userTeam} />
                             </div>
                         </div>
-                    )}
-                </div>
-
-                {/* RIGHT: BATTLE LOG (The "Neural Link") */}
-                <div className="w-[400px] border-l-2 border-slate-800 bg-black flex flex-col relative shadow-[-10px_0_20px_rgba(0,0,0,0.5)]">
-                    <div className="bg-slate-900 text-slate-400 text-xs px-3 py-1 font-mono uppercase tracking-widest border-b border-slate-800 flex justify-between items-center z-10">
-                        <span>Neural Link v2.0</span>
-                        <div className="flex gap-1">
-                            <div className="w-2 h-2 rounded-full bg-red-500 opacity-50" />
-                            <div className="w-2 h-2 rounded-full bg-yellow-500 opacity-50" />
-                            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                        </div>
-                    </div>
-                    <div className="flex-1 overflow-hidden relative">
-                        <NeuralLink />
-                    </div>
-                    {/* Fake Input */}
-                    <div className="p-2 border-t border-slate-800 bg-slate-950 z-10">
-                        <div className="flex items-center gap-2 text-slate-500 font-mono text-sm">
-                            <span className="text-yellow-500 pointer-events-none">{'>'}</span>
-                            <span className="animate-pulse">_</span>
-                        </div>
                     </div>
                 </div>
-            </div>
 
-            {/* Switch Modal */}
-            {showSwitchModal && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-slate-900 border-2 border-cyan-500 rounded-xl max-w-2xl w-full p-6 relative shadow-2xl shadow-cyan-500/20">
-                        <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-2xl font-black text-white">Switch Pokémon</h2>
-                            <button onClick={() => setShowSwitchModal(false)} className="text-slate-400 hover:text-white">
-                                <X className="w-6 h-6" />
-                            </button>
+                {/* 2. CONTROLS CONSOLE */}
+                <div className="h-[320px] bg-slate-950/95 backdrop-blur-md flex border-t border-slate-700 shadow-2xl z-30">
+                    <div className="flex-1 p-6 relative flex flex-col">
+                        <div className="absolute inset-0 bg-slate-900/50 skew-x-12 -ml-20 w-1/2 opacity-20 pointer-events-none" />
+
+                        {/* Prompt */}
+                        <div className={`mb-4 text-xl font-bold text-white tracking-wide border-l-4 ${diffStyle.border} pl-4 h-10 flex items-center bg-black/20`}>
+                            {turnState === 'USER_TURN'
+                                ? `What will ${userMon.name} do?`
+                                : turnState === 'BOT_TURN'
+                                    ? `Waiting for ${botMon.name}...`
+                                    : turnState === 'GAME_OVER'
+                                        ? 'COMBAT ENDED'
+                                        : 'Processing...'}
                         </div>
 
-                        <div className="grid grid-cols-1 gap-3">
-                            {userTeam.map((pokemon, idx) => {
-                                const isActive = idx === activeUserIndex;
-                                const isFainted = pokemon.currentHp <= 0;
-                                const hpPercent = (pokemon.currentHp / pokemon.maxHp) * 100;
+                        {/* --- MAIN MENU MODE --- */}
+                        {menuMode === 'MAIN' && (
+                            <div className="grid grid-cols-2 gap-4 max-w-lg h-full max-h-[160px]">
+                                <button
+                                    disabled={turnState !== 'USER_TURN'}
+                                    onClick={() => setMenuMode('FIGHT')}
+                                    className={`
+                                    rounded-xl border-b-4 transition-all active:border-b-0 active:translate-y-1
+                                    flex flex-col items-center justify-center gap-2
+                                    ${turnState === 'USER_TURN'
+                                            ? 'bg-red-600 border-red-800 hover:bg-red-500 text-white shadow-lg shadow-red-900/50'
+                                            : 'bg-slate-800 border-slate-900 text-slate-500 cursor-not-allowed'}
+                                `}
+                                >
+                                    <Sword className="w-8 h-8" />
+                                    <span className="font-black text-2xl uppercase tracking-wider">FIGHT</span>
+                                </button>
 
-                                return (
-                                    <button
-                                        key={pokemon.id}
-                                        disabled={isActive || isFainted}
-                                        onClick={() => handleSwitch(idx)}
-                                        className={`
-                                            p-4 rounded-lg border-2 text-left transition-all flex items-center gap-4
-                                            ${isActive ? 'border-yellow-500 bg-yellow-500/20 cursor-default' :
-                                                isFainted ? 'border-slate-800 bg-slate-900 opacity-50 cursor-not-allowed' :
-                                                    'border-cyan-600 bg-slate-800 hover:border-cyan-400 hover:bg-slate-700 cursor-pointer'}
-                                        `}
-                                    >
-                                        <img src={pokemon.spriteUrl} alt={pokemon.name} className="w-16 h-16 object-contain" />
-                                        <div className="flex-1">
-                                            <div className="flex justify-between items-center mb-2">
-                                                <span className="font-bold text-white text-lg">{pokemon.name}</span>
-                                                {isActive && <span className="text-xs bg-yellow-500 text-black px-2 py-1 rounded font-bold">ACTIVE</span>}
-                                                {isFainted && <span className="text-xs bg-red-500 text-white px-2 py-1 rounded font-bold">FAINTED</span>}
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+                                <button
+                                    disabled={turnState !== 'USER_TURN' || userTeam.filter(p => p.currentHp > 0).length <= 1}
+                                    onClick={() => setMenuMode('PKMN')}
+                                    className={`
+                                    rounded-xl border-b-4 transition-all active:border-b-0 active:translate-y-1
+                                    flex flex-col items-center justify-center gap-2
+                                    ${turnState === 'USER_TURN' && userTeam.filter(p => p.currentHp > 0).length > 1
+                                            ? 'bg-cyan-600 border-cyan-800 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-900/50'
+                                            : 'bg-slate-800 border-slate-900 text-slate-500 cursor-not-allowed'}
+                                `}
+                                >
+                                    <RefreshCw className="w-8 h-8" />
+                                    <span className="font-black text-2xl uppercase tracking-wider">PKMN</span>
+                                </button>
+                            </div>
+                        )}
+
+                        {/* --- FIGHT MODE (MOVES) --- */}
+                        {menuMode === 'FIGHT' && (
+                            <div className="flex flex-col h-full">
+                                <button
+                                    onClick={() => setMenuMode('MAIN')}
+                                    className="text-sm text-slate-400 hover:text-white flex items-center gap-1 mb-2 w-fit px-2 py-1 hover:bg-white/10 rounded"
+                                >
+                                    <ArrowLeft className="w-4 h-4" /> Back to Menu
+                                </button>
+
+                                <div className="grid grid-cols-2 gap-3 max-w-3xl flex-1">
+                                    {userMon.moves.map((move, idx) => {
+                                        const typeColor = typeColours[move.type.toLowerCase()] || '#A8A77A';
+
+                                        return (
+                                            <button
+                                                key={idx}
+                                                disabled={turnState !== 'USER_TURN'}
+                                                onClick={() => { handleUserMove(move); setMenuMode('MAIN'); }}
+                                                style={{ backgroundColor: typeColor }}
+                                                className={`
+                                                relative overflow-hidden group rounded-lg border-2 border-black/20
+                                                transition-all duration-200 shadow-md text-left
+                                                ${turnState === 'USER_TURN'
+                                                        ? 'hover:scale-[1.02] hover:shadow-lg hover:brightness-110 cursor-pointer'
+                                                        : 'opacity-50 grayscale cursor-not-allowed'}
+                                            `}
+                                            >
+                                                {/* Button Content */}
+                                                <div className="relative z-10 p-3 flex flex-col justify-between h-full">
+                                                    <div className="flex justify-between items-start">
+                                                        <span className="font-black text-white text-lg drop-shadow-md uppercase tracking-tight">
+                                                            {move.name}
+                                                        </span>
+                                                        <div className="p-1 bg-black/20 rounded-full backdrop-blur-sm">
+                                                            {getCategoryIcon(move.category)}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="flex justify-between items-end mt-2">
+                                                        <span className="px-2 py-0.5 bg-black/30 rounded text-xs font-bold text-white/90 backdrop-blur-md uppercase border border-white/10">
+                                                            {move.type}
+                                                        </span>
+                                                        <div className="text-xs font-mono text-white/90 bg-black/30 px-2 py-0.5 rounded border border-white/10">
+                                                            POW: {move.power || '-'}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Shine Effect */}
+                                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 pointer-events-none" />
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- PKMN MODE (SWITCHING) --- */}
+                        {menuMode === 'PKMN' && (
+                            <div className="flex flex-col h-full">
+                                <button
+                                    onClick={() => setMenuMode('MAIN')}
+                                    className="text-sm text-slate-400 hover:text-white flex items-center gap-1 mb-2 w-fit px-2 py-1 hover:bg-white/10 rounded"
+                                >
+                                    <ArrowLeft className="w-4 h-4" /> Back to Menu
+                                </button>
+                                <div className="grid grid-cols-3 gap-3 max-w-2xl flex-1">
+                                    {userTeam.map((pokemon, idx) => {
+                                        const isActive = idx === activeUserIndex;
+                                        const isFainted = pokemon.currentHp <= 0;
+                                        const hpPercent = (pokemon.currentHp / pokemon.maxHp) * 100;
+
+                                        return (
+                                            <button
+                                                key={pokemon.id}
+                                                disabled={isActive || isFainted}
+                                                onClick={() => { handleSwitch(idx); setMenuMode('MAIN'); }}
+                                                className={`
+                                                p-2 rounded-lg border-2 text-center transition-all flex flex-col items-center justify-center
+                                                ${isActive ? 'border-yellow-500 bg-yellow-500/20' :
+                                                        isFainted ? 'border-slate-800 bg-slate-900 opacity-50' :
+                                                            'border-cyan-600 bg-slate-800 hover:border-cyan-400 hover:bg-slate-700'}
+                                            `}
+                                            >
+                                                <img src={pokemon.spriteUrl} alt={pokemon.name} className="w-10 h-10 object-contain" />
+                                                <span className="text-xs font-bold truncate w-full mt-1">{pokemon.name}</span>
+                                                <div className="w-full h-1 bg-slate-700 rounded-full overflow-hidden mt-1">
                                                     <div
-                                                        className={`h-full transition-all ${hpPercent > 50 ? 'bg-green-500' : hpPercent > 20 ? 'bg-yellow-400' : 'bg-red-500'
-                                                            }`}
+                                                        className={`h-full ${hpPercent > 50 ? 'bg-green-500' : hpPercent > 20 ? 'bg-yellow-400' : 'bg-red-500'}`}
                                                         style={{ width: `${hpPercent}%` }}
                                                     />
                                                 </div>
-                                                <span className="text-xs text-slate-400 font-mono">
-                                                    {Math.ceil(pokemon.currentHp)}/{pokemon.maxHp}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </button>
-                                );
-                            })}
+                                                {isActive && <span className="text-[9px] text-yellow-400 mt-0.5">ACTIVE</span>}
+                                                {isFainted && <span className="text-[9px] text-red-400 mt-0.5">FAINTED</span>}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* RIGHT: BATTLE LOG */}
+                    <div className={`w-[400px] border-l-2 ${diffStyle.border} bg-black/80 flex flex-col relative shadow-[-10px_0_20px_rgba(0,0,0,0.5)]`}>
+                        <div className={`bg-slate-900 text-slate-400 text-xs px-3 py-1 font-mono uppercase tracking-widest border-b border-slate-800 flex justify-between items-center z-10`}>
+                            <span>Neural Link v2.0</span>
+                            <div className="flex gap-1">
+                                <div className="w-2 h-2 rounded-full bg-red-500 opacity-50" />
+                                <div className="w-2 h-2 rounded-full bg-yellow-500 opacity-50" />
+                                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-hidden relative">
+                            <NeuralLink />
+                        </div>
+                        <div className="p-2 border-t border-slate-800 bg-slate-950 z-10">
+                            <div className="flex items-center gap-2 text-slate-500 font-mono text-sm">
+                                <span className={`pointer-events-none ${diffStyle.text}`}>{'>'}</span>
+                                <span className="animate-pulse">_</span>
+                            </div>
                         </div>
                     </div>
                 </div>
-            )}
-        </div>
+
+                {/* Switch Modal */}
+                {showSwitchModal && (
+                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <div className="bg-slate-900 border-2 border-cyan-500 rounded-xl max-w-2xl w-full p-6 relative shadow-2xl shadow-cyan-500/20">
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-2xl font-black text-white">Switch Pokémon</h2>
+                                <button onClick={() => setShowSwitchModal(false)} className="text-slate-400 hover:text-white">
+                                    <X className="w-6 h-6" />
+                                </button>
+                            </div>
+                            {/* ... (Modal Content) ... */}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div >
     );
 };
 
 const HPBar: React.FC<{ pokemon: BattlePokemon, showNumbers?: boolean }> = ({ pokemon, showNumbers }) => {
     const hpPercent = (pokemon.currentHp / pokemon.maxHp) * 100;
-
-    // Showdown colors: Green > 50, Yellow > 20, Red <= 20
     const hpColor = hpPercent > 50 ? 'bg-green-500' : hpPercent > 20 ? 'bg-yellow-400' : 'bg-red-500';
 
     return (
@@ -522,5 +539,28 @@ const HPBar: React.FC<{ pokemon: BattlePokemon, showNumbers?: boolean }> = ({ po
         </div>
     );
 }
+
+const TeamHealthIndicator: React.FC<{ team: BattlePokemon[] }> = ({ team }) => {
+    return (
+        <div className="flex gap-1.5 mt-2 justify-end">
+            {team.map((p) => {
+                const hpPercent = (p.currentHp / p.maxHp) * 100;
+                let colorClass = 'bg-slate-800 border-slate-700'; // Dead/Fainted
+
+                if (hpPercent > 50) colorClass = 'bg-green-500 border-green-600 shadow-[0_0_8px_rgba(34,197,94,0.6)]';
+                else if (hpPercent > 20) colorClass = 'bg-yellow-400 border-yellow-500 shadow-[0_0_8px_rgba(250,204,21,0.6)]';
+                else if (hpPercent > 0) colorClass = 'bg-red-500 border-red-600 shadow-[0_0_8px_rgba(239,68,68,0.6)]';
+
+                return (
+                    <div
+                        key={p.id}
+                        className={`w-3.5 h-3.5 rounded-full border ${colorClass} transition-all duration-500`}
+                        title={`${p.name}: ${Math.ceil(p.currentHp)}/${p.maxHp}`}
+                    />
+                );
+            })}
+        </div>
+    );
+};
 
 export default BattleArena;

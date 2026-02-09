@@ -80,10 +80,16 @@ const GET_POKEMON_WITH_MOVES_QUERY = `
   }
 `;
 
-const getRandomIds = (count: number, max: number = 493): number[] => {
+// UPDATED: Equal probability for Gen 1, 2, and 3
+const getRandomIds = (count: number): number[] => {
   const ids = new Set<number>();
+  // Gen 1: 1-151, Gen 2: 152-251, Gen 3: 252-386
+  const genRanges = [[1, 151], [152, 251], [252, 386]];
+
   while (ids.size < count) {
-    ids.add(Math.floor(Math.random() * max) + 1);
+    const range = genRanges[Math.floor(Math.random() * genRanges.length)];
+    const randomId = Math.floor(Math.random() * (range[1] - range[0] + 1)) + range[0];
+    ids.add(randomId);
   }
   return Array.from(ids);
 };
@@ -185,20 +191,6 @@ export const fetchPokemonWithMoves = async (ids: number[]): Promise<PokemonBase[
       // Process moves and deduplicate by name
       const movesMap = new Map<string, PokemonMove>();
 
-      console.log(`[MOVE DEBUG] Processing moves for ${p.name} (ID: ${p.id})`);
-      console.log(`[MOVE DEBUG] Raw moves from API:`, p.pokemon_v2_pokemonmoves.length);
-
-      // Log ALL raw moves for debugging
-      console.log(`[MOVE DEBUG] === RAW MOVE ANALYSIS ===`);
-      const rawMoveAnalysis = p.pokemon_v2_pokemonmoves.map((pm: any) => ({
-        name: pm.pokemon_v2_move.name,
-        power: pm.pokemon_v2_move.power,
-        level: pm.level,
-        type: pm.pokemon_v2_move.pokemon_v2_type?.name,
-        damageClass: pm.pokemon_v2_move.pokemon_v2_movedamageclass?.name
-      }));
-      console.table(rawMoveAnalysis);
-
       p.pokemon_v2_pokemonmoves.forEach((pm: any) => {
         const move = {
           id: pm.pokemon_v2_move.id,
@@ -220,9 +212,6 @@ export const fetchPokemonWithMoves = async (ids: number[]): Promise<PokemonBase[
 
       // Shuffle moves for variety instead of always highest power
       const shuffledMoves = moves.sort(() => Math.random() - 0.5);
-
-      console.log(`[MOVE DEBUG] Total unique attacking moves:`, moves.length);
-      console.log(`[MOVE DEBUG] Moves:`, shuffledMoves.slice(0, 7).map(m => `${m.name} (${m.type}, PWR:${m.power})`));
 
       return {
         id: p.id,

@@ -82,7 +82,7 @@ const Home: React.FC = () => {
 
                 {/* Footer Info */}
                 <div className="mt-12 text-slate-600 text-sm font-mono">
-                    <p>Powered by Google Gemini AI • PokeAPI • React + TypeScript</p>
+                    <p>Powered by Google Gemini AI • PokeAPI</p>
                 </div>
             </div>
         </div>

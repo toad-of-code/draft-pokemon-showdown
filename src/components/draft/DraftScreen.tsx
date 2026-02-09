@@ -5,7 +5,9 @@ import { fetchDraftPair, fetchPokemonByIds, fetchPokemonWithMoves, type PokemonM
 import { generateFakemonName, generateCounterTeam } from '../../api/geminiAgent';
 import { generateSpriteUrl } from '../../api/nanoBanana';
 import DraftCard from './DraftCard';
-import { Zap, Skull, Shield, X, Check } from 'lucide-react';
+import { X, Check, CircleDot, Shield, Zap, Skull } from 'lucide-react';
+import physicalIcon from '../../assets/physical_move_icon_by_jormxdos_dfgb60u-fullview.png';
+import specialIcon from '../../assets/special_move_icon_by_jormxdos_dfgb60n-fullview.png';
 
 const DraftScreen: React.FC = () => {
     const hasLoadedRef = useRef(false);
@@ -20,12 +22,63 @@ const DraftScreen: React.FC = () => {
     const [movePool, setMovePool] = useState<BattleMove[]>([]);
     const [selectedMoves, setSelectedMoves] = useState<BattleMove[]>([]);
 
+    // Difficulty Color Mapping
+    const difficultyColors = {
+        EASY: {
+            text: 'text-green-400',
+            border: 'border-green-500',
+            shadow: 'shadow-green-500/20',
+            bg: 'bg-green-500/10',
+            btnActive: 'bg-green-500 text-black',
+            hover: 'hover:bg-green-500/20'
+        },
+        NORMAL: {
+            text: 'text-yellow-400',
+            border: 'border-yellow-500',
+            shadow: 'shadow-yellow-500/20',
+            bg: 'bg-yellow-500/10',
+            btnActive: 'bg-yellow-500 text-black',
+            hover: 'hover:bg-yellow-500/20'
+        },
+        HARD: {
+            text: 'text-red-500',
+            border: 'border-red-600',
+            shadow: 'shadow-red-500/20',
+            bg: 'bg-red-500/10',
+            btnActive: 'bg-red-600 text-white',
+            hover: 'hover:bg-red-500/20'
+        }
+    };
+
+    // Standard Type Hex Codes
+    const typeColours: Record<string, string> = {
+        normal: '#A8A77A',
+        fire: '#EE8130',
+        water: '#6390F0',
+        electric: '#F7D02C',
+        grass: '#7AC74C',
+        ice: '#96D9D6',
+        fighting: '#C22E28',
+        poison: '#A33EA1',
+        ground: '#E2BF65',
+        flying: '#A98FF3',
+        psychic: '#F95587',
+        bug: '#A6B91A',
+        rock: '#B6A136',
+        ghost: '#735797',
+        dragon: '#6F35FC',
+        dark: '#705746',
+        steel: '#B7B7CE',
+        fairy: '#D685AD',
+    };
+
+    const diffStyle = difficultyColors[difficulty as keyof typeof difficultyColors] || difficultyColors.NORMAL;
+
     const loadNewPair = async () => {
         setLoading(true);
         try {
             // 1. Fetch 2 random base Pokemon with moves
             const basePair = await fetchDraftPair();
-            console.log(`[DRAFT DEBUG] fetchDraftPair returned ${basePair.length} Pokémon:`, basePair.map(p => `${p.name} (ID:${p.id})`));
 
             if (basePair.length < 2) {
                 console.error("Failed to fetch enough pokemon");
@@ -35,9 +88,7 @@ const DraftScreen: React.FC = () => {
 
             // 2. Fetch full move data for these Pokemon
             const ids = basePair.map(p => p.id);
-            console.log(`[DRAFT DEBUG] Fetching moves for IDs:`, ids);
             const pairWithMoves = await fetchPokemonWithMoves(ids);
-            console.log(`[DRAFT DEBUG] fetchPokemonWithMoves returned ${pairWithMoves.length} Pokémon:`, pairWithMoves.map(p => `${p.name} (ID:${p.id})`));
 
             // 3. Enhance them (AI Name + Sprite)
             const enhancedPair = await Promise.all(pairWithMoves.map(async (p) => {
@@ -62,7 +113,6 @@ const DraftScreen: React.FC = () => {
                 } as BattlePokemon & { learnset: PokemonMove[] };
             }));
 
-            console.log(`[DRAFT DEBUG] Final enhanced pair: ${enhancedPair.length} Pokémon`);
             setDraftPair(enhancedPair);
         } catch (error) {
             console.error("Error loading draft pair:", error);
@@ -74,8 +124,6 @@ const DraftScreen: React.FC = () => {
         // Convert PokemonMove[] to BattleMove[] and select up to 7
         const learnset = pokemon.learnset || [];
 
-        console.log(`[MOVE SELECTION] ${pokemon.name} has ${learnset.length} moves in learnset`);
-
         const battleMoves: BattleMove[] = learnset
             .map(m => ({
                 name: m.name,
@@ -84,18 +132,7 @@ const DraftScreen: React.FC = () => {
                 accuracy: m.accuracy || 100,
                 category: m.damageClass as 'physical' | 'special' | 'status'
             }))
-            .slice(0, 7); // Take top 7 moves (already sorted by level desc)
-
-        console.log(`[MOVE SELECTION] Offering ${battleMoves.length} moves to user`);
-
-        // Fallback if Pokemon has fewer than 7 moves
-        if (battleMoves.length < 7) {
-            console.warn(`[MOVE SELECTION] ⚠️ ${pokemon.name} only has ${battleMoves.length} learnable moves`);
-        }
-
-        if (battleMoves.length < 4) {
-            console.error(`[MOVE SELECTION] ❌ CRITICAL: ${pokemon.name} has fewer than 4 moves!`);
-        }
+            .slice(0, 7); // Take top 7 moves
 
         setMovePool(battleMoves);
         setSelectedPokemon(pokemon);
@@ -191,7 +228,7 @@ const DraftScreen: React.FC = () => {
             return {
                 id: crypto.randomUUID(),
                 baseId: p.id,
-                name: `Bot-${p.name}`,
+                name: p.name.charAt(0).toUpperCase() + p.name.slice(1),
                 types: p.types,
                 stats: p.stats,
                 moves: selectedMoves,
@@ -213,7 +250,7 @@ const DraftScreen: React.FC = () => {
     }, []);
 
     return (
-        <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
+        <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 transition-colors duration-500">
             <header className="mb-12 text-center">
                 <h1 className="text-4xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 uppercase tracking-tighter">
                     Infinite Draft Ops
@@ -224,40 +261,44 @@ const DraftScreen: React.FC = () => {
 
                 {/* Difficulty Selector */}
                 <div className="flex justify-center gap-4 mt-6">
-                    {(['EASY', 'NORMAL', 'HARD'] as const).map((mode) => (
-                        <button
-                            key={mode}
-                            onClick={() => setDifficulty(mode)}
-                            disabled={draftCount > 0} // Can only change before starting
-                            className={`
-                                px-4 py-2 rounded-full font-bold text-sm transition-all flex items-center gap-2
-                                ${difficulty === mode
-                                    ? 'bg-yellow-500 text-black scale-110'
-                                    : 'bg-slate-800 text-slate-500 hover:bg-slate-700'}
-                                ${draftCount > 0 ? 'opacity-50 cursor-not-allowed' : ''}
-                            `}
-                        >
-                            {mode === 'EASY' && <Shield className="w-4 h-4" />}
-                            {mode === 'NORMAL' && <Zap className="w-4 h-4" />}
-                            {mode === 'HARD' && <Skull className="w-4 h-4" />}
-                            {mode}
-                        </button>
-                    ))}
+                    {(['EASY', 'NORMAL', 'HARD'] as const).map((mode) => {
+                        const style = difficultyColors[mode];
+                        const isActive = difficulty === mode;
+                        return (
+                            <button
+                                key={mode}
+                                onClick={() => setDifficulty(mode)}
+                                disabled={draftCount > 0} // Can only change before starting
+                                className={`
+                                    px-4 py-2 rounded-full font-bold text-sm transition-all flex items-center gap-2 border
+                                    ${isActive
+                                        ? `${style.btnActive} ${style.border} scale-110 shadow-lg`
+                                        : `bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700`}
+                                    ${draftCount > 0 ? 'opacity-50 cursor-not-allowed' : ''}
+                                `}
+                            >
+                                {mode === 'EASY' && <Shield className="w-4 h-4" />}
+                                {mode === 'NORMAL' && <Zap className="w-4 h-4" />}
+                                {mode === 'HARD' && <Skull className="w-4 h-4" />}
+                                {mode}
+                            </button>
+                        );
+                    })}
                 </div>
             </header>
 
             {loading ? (
                 <div className="flex flex-col items-center gap-4">
-                    <Zap className="w-12 h-12 text-yellow-400 animate-bounce" />
-                    <span className="text-slate-400 font-mono animate-pulse">Scanning Multiverse...</span>
+                    <Zap className={`w-12 h-12 ${diffStyle.text} animate-bounce`} />
+                    <span className={`font-mono animate-pulse ${diffStyle.text}`}>Scanning Multiverse...</span>
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-4xl relative">
 
                     {/* VS Badge */}
                     <div className="hidden md:flex absolute inset-0 items-center justify-center pointer-events-none z-10">
-                        <div className="bg-slate-900 border-2 border-slate-700 rounded-full w-16 h-16 flex items-center justify-center">
-                            <span className="text-xl font-black text-white italic">VS</span>
+                        <div className={`bg-slate-900 border-2 ${diffStyle.border} rounded-full w-16 h-16 flex items-center justify-center shadow-lg ${diffStyle.shadow}`}>
+                            <span className={`text-xl font-black italic ${diffStyle.text}`}>VS</span>
                         </div>
                     </div>
 
@@ -272,14 +313,14 @@ const DraftScreen: React.FC = () => {
             {/* Move Selection Modal */}
             {showMoveSelection && selectedPokemon && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-slate-900 border-2 border-yellow-500 rounded-xl max-w-3xl w-full p-6 relative shadow-2xl shadow-yellow-500/20">
+                    <div className={`bg-slate-900 border-2 ${diffStyle.border} rounded-xl max-w-3xl w-full p-6 relative shadow-2xl ${diffStyle.shadow}`}>
                         {/* Header */}
                         <div className="flex justify-between items-center mb-6">
                             <div>
                                 <h2 className="text-2xl font-black text-white">Select 4 Moves</h2>
                                 <p className="text-slate-400 text-sm">for {selectedPokemon.name}</p>
                             </div>
-                            <div className="text-yellow-500 font-bold text-lg">
+                            <div className={`${diffStyle.text} font-bold text-lg`}>
                                 {selectedMoves.length} / 4
                             </div>
                         </div>
@@ -288,28 +329,41 @@ const DraftScreen: React.FC = () => {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
                             {movePool.map((move, idx) => {
                                 const isSelected = selectedMoves.find(m => m.name === move.name);
+                                const typeColor = typeColours[move.type.toLowerCase()] || '#A8A77A';
+
                                 return (
                                     <button
                                         key={idx}
                                         onClick={() => toggleMoveSelection(move)}
                                         disabled={!isSelected && selectedMoves.length >= 4}
+                                        style={{ backgroundColor: typeColor }}
                                         className={`
-                                            relative p-4 rounded-lg border-2 text-left transition-all
+                                            relative p-4 rounded-lg border-2 text-left transition-all shadow-md group overflow-hidden
                                             ${isSelected
-                                                ? 'border-yellow-500 bg-yellow-500/20'
-                                                : 'border-slate-700 bg-slate-800 hover:border-slate-600'}
-                                            ${!isSelected && selectedMoves.length >= 4 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+                                                ? `${diffStyle.border} ring-2 ring-offset-2 ring-offset-slate-900 ${diffStyle.text.replace('text', 'ring')}`
+                                                : 'border-black/20 hover:border-white/50 opacity-90 hover:opacity-100'}
+                                            ${!isSelected && selectedMoves.length >= 4 ? 'grayscale opacity-40 cursor-not-allowed' : 'cursor-pointer'}
                                         `}
                                     >
-                                        <div className="flex justify-between items-start mb-2">
-                                            <span className="font-bold text-white text-lg">{move.name}</span>
-                                            {isSelected && <Check className="w-5 h-5 text-yellow-500" />}
+                                        <div className="relative z-10">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-black text-white text-lg drop-shadow-md">{move.name}</span>
+                                                    {move.category === 'physical' && <img src={physicalIcon} alt="Physical" className="w-10 h-10 object-contain drop-shadow-md" />}
+                                                    {move.category === 'special' && <img src={specialIcon} alt="Special" className="w-10 h-10 object-contain drop-shadow-md" />}
+                                                    {move.category === 'status' && <CircleDot className="w-6 h-6 text-slate-200 fill-slate-400 drop-shadow-md" />}
+                                                </div>
+                                                {isSelected && <Check className="w-6 h-6 text-white drop-shadow-md" />}
+                                            </div>
+                                            <div className="flex gap-2 text-xs text-white/90 font-mono">
+                                                <span className="px-2 py-0.5 bg-black/30 rounded uppercase border border-white/10">{move.type}</span>
+                                                <span className="px-2 py-0.5 bg-black/30 rounded border border-white/10">POW: {move.power || '-'}</span>
+                                                <span className="px-2 py-0.5 bg-black/30 rounded border border-white/10">ACC: {move.accuracy}%</span>
+                                            </div>
                                         </div>
-                                        <div className="flex gap-3 text-xs text-slate-400">
-                                            <span className="px-2 py-1 bg-black/40 rounded uppercase">{move.type}</span>
-                                            <span>POW: {move.power || '-'}</span>
-                                            <span>ACC: {move.accuracy}%</span>
-                                        </div>
+
+                                        {/* Subtle Shine Effect */}
+                                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 pointer-events-none" />
                                     </button>
                                 );
                             })}
@@ -330,7 +384,7 @@ const DraftScreen: React.FC = () => {
                                 className={`
                                     flex-1 px-6 py-3 rounded-lg font-bold transition-all flex items-center justify-center gap-2
                                     ${selectedMoves.length === 4
-                                        ? 'bg-yellow-500 text-black hover:bg-yellow-400'
+                                        ? `${diffStyle.btnActive} hover:opacity-90`
                                         : 'bg-slate-800 text-slate-600 cursor-not-allowed'}
                                 `}
                             >

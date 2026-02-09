@@ -18,13 +18,13 @@ const model = genAI.getGenerativeModel({
 export const generateFakemonName = async (type: string, originalName: string): Promise<string> => {
     if (!API_KEY) return `Neo-${originalName}`;
 
-    const prompt = `Rename this ${type}-type Pokémon (originally ${originalName}). Give it a cool, edgelord, competitive-battler style name. The new name MUST contain at least one syllable or part of "${originalName}". One word only.`;
+    const prompt = `Rename this ${type}-type Pokémon (originally ${originalName}). Give it a cool, competitive-battler style name. The new name MUST contain at least one syllable or part of "${originalName}". One word only.`;
 
     // Schema for strict name generation
     const schema = {
         type: SchemaType.OBJECT,
         properties: {
-            name: { type: SchemaType.STRING, description: "The single-word edgelord nickname" }
+            name: { type: SchemaType.STRING, description: "The single-word nickname" }
         },
         required: ["name"]
     };
@@ -43,7 +43,7 @@ export const generateFakemonName = async (type: string, originalName: string): P
         return data.name?.trim().split(' ')[0] || `Dark-${originalName}`;
     } catch (error) {
         console.error("Gemini Name Gen Error:", error);
-        return `Dark-${originalName}`;
+        return `Dark-${originalName.charAt(0).toUpperCase() + originalName.slice(1)}`;
     }
 };
 
@@ -59,7 +59,7 @@ export const generateCounterTeam = async (userTeam: any[]): Promise<any> => {
     const prompt = `
      Context: You are a Competitive Pokémon World Champion.
      Opponent Team: ${teamDescription}.
-     Task: Identify 3 hard counters (Gen 1-4 Pokémon).
+     Task: Identify 3 hard counters (Gen 1-3 Pokémon).
    `;
 
     // Strict schema for team generation
@@ -107,7 +107,7 @@ export const generateBattleThought = async (botName: string, opponentName: strin
         Roleplay as a super-intelligent AI battle system named ${botName}.
         You are fighting ${opponentName}.
         You just decided to use the move "${moveName}".
-        Generate a very short, sci-fi style "thought process" log line (max 15 words).
+        Generate a very short "thought process" log line (max 15 words).
     `;
 
     const schema = {
@@ -130,6 +130,6 @@ export const generateBattleThought = async (botName: string, opponentName: strin
         return data.log;
     } catch (error) {
         console.error("Gemini Thought Gen Error:", error);
-        return `Target lock engaged. firing ${moveName}.`;
+        return `${moveName} selected.`;
     }
 };
