@@ -117,7 +117,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📄 License
 
-This project is open source. [[Link](https://mit-license.org/)]
+This project is open source.
 
 ---
 
