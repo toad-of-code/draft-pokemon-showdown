@@ -5,7 +5,7 @@ const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
 
 // Initialize the SDK for text-based tasks (prompt enhancement)
 const genAI = new GoogleGenerativeAI(API_KEY);
-const textModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const textModel = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
 // MODEL CONFIGURATION
 const IMAGE_MODEL = "gemini-3-pro-image-preview";

@@ -8,7 +8,7 @@ const genAI = new GoogleGenerativeAI(API_KEY);
 
 // Use the 1.5-flash model which supports structured output well
 const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
+    model: "gemini-3-flash-preview",
     // Set default generation config to force JSON
     generationConfig: {
         responseMimeType: "application/json"
