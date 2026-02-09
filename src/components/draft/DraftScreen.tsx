@@ -115,7 +115,12 @@ const DraftScreen: React.FC = () => {
                     isBot: false,
                     statusEffect: null,
                     statusTurns: 0,
-                    learnset: p.moves || [] // Store the full learnset
+                    learnset: p.moves || [], // Store the full learnset
+                    battleStats: {
+                        damageDealt: 0,
+                        damageTaken: 0,
+                        kills: 0
+                    }
                 } as BattlePokemon & { learnset: PokemonMove[] };
             }));
 
