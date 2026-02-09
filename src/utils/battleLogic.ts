@@ -189,6 +189,11 @@ export const predictDamage = (attacker: BattlePokemon, defender: BattlePokemon, 
  * Selects the move with the highest predicted damage.
  */
 export const selectBestMove = (attacker: BattlePokemon, defender: BattlePokemon): BattleMove => {
+    if (!attacker.moves || attacker.moves.length === 0) {
+        // Fallback Struggle-like move if no moves exist (should not happen)
+        return { name: 'Struggle', type: 'normal', power: 50, accuracy: 100, category: 'physical', pp: 0, currentPp: 0 };
+    }
+
     let bestMove = attacker.moves[0];
     let bestDamage = -1;
 
